@@ -15,9 +15,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm install
+          node-version: '22'
+      - run: npm install --no-package-lock
       - run: node scripts/update-adp.js
       - id: changes
         run: git diff --quiet public/app.js src/players-data.js || echo "changed=true" >> $GITHUB_OUTPUT
