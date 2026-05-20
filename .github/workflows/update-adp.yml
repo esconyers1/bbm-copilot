@@ -1,0 +1,32 @@
+name: Update ADP Data
+
+on:
+  schedule:
+    - cron: '30 13 * * 1'
+  workflow_dispatch:
+
+jobs:
+  update-adp:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install
+      - run: node scripts/update-adp.js
+      - id: changes
+        run: git diff --quiet public/app.js src/players-data.js || echo "changed=true" >> $GITHUB_OUTPUT
+      - if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "ADP Bot"
+          git config user.email "actions@github.com"
+          git add public/app.js src/players-data.js
+          git commit -m "Auto-update ADP data $(date +%Y-%m-%d)"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
