@@ -1,0 +1,13 @@
+{
+  "name": "bbm-copilot",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "esbuild src/index.jsx --bundle --outfile=public/app.js --loader:.jsx=jsx --define:process.env.NODE_ENV='\"production\"' --minify --legal-comments=none",
+    "update-adp": "node scripts/update-adp.js",
+    "dev": "esbuild src/index.jsx --bundle --outfile=public/app.js --loader:.jsx=jsx --define:process.env.NODE_ENV='\"development\"' --sourcemap"
+  },
+  "dependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}
