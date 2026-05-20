@@ -20,15 +20,21 @@ jobs:
         run: |
           npm init -y
           npm install react react-dom esbuild
-      - run: node scripts/update-adp.js
-      - id: changes
-        run: git diff --quiet public/app.js src/players-data.js || echo "changed=true" >> $GITHUB_OUTPUT
-      - if: steps.changes.outputs.changed == 'true'
+      - name: Create output dir
+        run: mkdir -p public
+      - name: Fetch ADP and rebuild
+        run: node scripts/update-adp.js
+      - name: Copy bundle to root
+        run: |
+          if [ -f public/app.js ]; then
+            cp public/app.js app.js
+          fi
+      - name: Commit if changed
         run: |
           git config user.name "ADP Bot"
           git config user.email "actions@github.com"
-          git add public/app.js src/players-data.js
-          git commit -m "Auto-update ADP data $(date +%Y-%m-%d)"
+          git add app.js src/players-data.js
+          git diff --staged --quiet || git commit -m "Auto-update ADP data $(date +%Y-%m-%d)"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
