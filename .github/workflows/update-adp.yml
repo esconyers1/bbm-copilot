@@ -16,7 +16,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --no-package-lock
+      - name: Install dependencies
+        run: |
+          npm init -y
+          npm install react react-dom esbuild
       - run: node scripts/update-adp.js
       - id: changes
         run: git diff --quiet public/app.js src/players-data.js || echo "changed=true" >> $GITHUB_OUTPUT
