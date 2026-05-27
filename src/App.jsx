@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
+import { createRoot } from "react-dom/client";
 
 
 
@@ -119,14 +120,72 @@ const RAW = [
   ["Greg Dortch","WR","ARI",157.5],["Christian Watson","WR","GB",165.5],
 ];
 
-const PLAYERS = RAW.map((r, i) => ({
-  id: i + 1,
-  name: r[0],
-  pos: r[1],
-  team: r[2],
-  adp: r[3],
-  bye: BYE[r[2]] || 9,
-}));
+// DraftKings Full PPR ADP — RBs and slot/receiving WRs elevated
+const RAW_DK = [
+  ["Ja'Marr Chase","WR","CIN",1.3],["Saquon Barkley","RB","PHI",2.1],
+  ["Justin Jefferson","WR","MIN",3.0],["CeeDee Lamb","WR","DAL",4.0],
+  ["Bijan Robinson","RB","ATL",5.2],["Jahmyr Gibbs","RB","DET",6.1],
+  ["Malik Nabers","WR","NYG",7.4],["Amon-Ra St. Brown","WR","DET",8.2],
+  ["Christian McCaffrey","RB","SF",9.0],["Puka Nacua","WR","LAR",10.1],
+  ["De'Von Achane","RB","MIA",11.3],["Brian Thomas Jr.","WR","JAX",12.2],
+  ["Ashton Jeanty","RB","LV",13.4],["Drake London","WR","ATL",14.1],
+  ["Brock Bowers","TE","LV",15.0],["Nico Collins","WR","HOU",16.2],
+  ["Ladd McConkey","WR","LAC",17.1],["Garrett Wilson","WR","NYJ",18.3],
+  ["Derrick Henry","RB","BAL",19.5],["Josh Jacobs","RB","GB",20.4],
+  ["Bucky Irving","RB","TB",21.2],["Tee Higgins","WR","CIN",22.1],
+  ["A.J. Brown","WR","PHI",23.5],["Jonathan Taylor","RB","IND",24.2],
+  ["Chase Brown","RB","CIN",25.4],["Kenneth Walker","RB","SEA",26.5],
+  ["Khalil Shakir","WR","BUF",27.0],["Jaxon Smith-Njigba","WR","SEA",28.1],
+  ["Marvin Harrison Jr.","WR","ARI",29.0],["James Cook","RB","BUF",30.2],
+  ["DK Metcalf","WR","PIT",31.3],["Davante Adams","WR","LAR",32.1],
+  ["Terry McLaurin","WR","WAS",33.4],["Trey McBride","TE","ARI",34.1],
+  ["Joe Mixon","RB","HOU",35.3],["DeVonta Smith","WR","PHI",36.2],
+  ["George Pickens","WR","DAL",37.4],["Kyren Williams","RB","LAR",38.1],
+  ["Mike Evans","WR","TB",39.3],["Jayden Daniels","QB","WAS",40.0],
+  ["Jalen Hurts","QB","PHI",41.2],["Josh Allen","QB","BUF",42.0],
+  ["Lamar Jackson","QB","BAL",43.5],["Sam LaPorta","TE","DET",44.1],
+  ["Jaylen Waddle","WR","DEN",45.4],["Travis Etienne","RB","JAX",46.2],
+  ["Rashee Rice","WR","KC",47.1],["DJ Moore","WR","BUF",48.3],
+  ["Calvin Ridley","WR","TEN",49.2],["Zach Charbonnet","RB","SEA",50.5],
+  ["Tetairoa McMillan","WR","CAR",51.3],["Tony Pollard","RB","TEN",52.4],
+  ["Jordan Love","QB","GB",53.1],["Patrick Mahomes","QB","KC",54.3],
+  ["Courtland Sutton","WR","DEN",55.2],["Jameson Williams","WR","DET",56.4],
+  ["Travis Kelce","TE","KC",57.1],["George Kittle","TE","SF",58.3],
+  ["Rome Odunze","WR","CHI",59.2],["Chris Olave","WR","NO",60.4],
+  ["Bo Nix","QB","DEN",61.5],["Kaleb Johnson","RB","SEA",62.1],
+  ["Stefon Diggs","WR","NE",63.3],["Jordan Mason","RB","MIN",64.2],
+  ["Tank Bigsby","RB","JAX",65.4],["Cooper Kupp","WR","SEA",66.2],
+  ["Quinshon Judkins","RB","CLE",67.5],["Jakobi Meyers","WR","LV",68.3],
+  ["Caleb Williams","QB","CHI",69.1],["Drake Maye","QB","NE",70.4],
+  ["Mark Andrews","TE","BAL",71.2],["Tyreek Hill","WR","MIA",72.4],
+  ["Jordan Addison","WR","MIN",73.2],["Jaylen Warren","RB","PIT",74.5],
+  ["Najee Harris","RB","LAC",75.3],["Ricky Pearsall","WR","SF",76.5],
+  ["Tyler Warren","TE","IND",77.3],["David Montgomery","RB","DET",78.6],
+  ["Tucker Kraft","TE","GB",79.4],["Cam Skattebo","RB","NYG",80.2],
+  ["Xavier Worthy","WR","KC",81.4],["Joe Burrow","QB","CIN",82.2],
+  ["Keon Coleman","WR","BUF",83.4],["Baker Mayfield","QB","TB",84.2],
+  ["Justin Fields","QB","NYJ",85.5],["Aaron Jones","RB","MIN",86.3],
+  ["Isiah Pacheco","RB","KC",87.5],["Jerry Jeudy","WR","CLE",88.3],
+  ["Adonai Mitchell","WR","IND",90.5],["Jauan Jennings","WR","SF",92.3],
+  ["Romeo Doubs","WR","GB",94.5],["Hunter Henry","TE","NE",96.3],
+  ["David Njoku","TE","CLE",98.5],["Jonnu Smith","TE","PIT",100.3],
+  ["Trey Benson","RB","ARI",104.5],["Tyjae Spears","RB","TEN",106.3],
+  ["Brock Purdy","QB","SF",108.5],["Will Shipley","RB","PHI",112.5],
+  ["Cole Kmet","TE","CHI",114.3],["Josh Downs","WR","IND",118.5],
+  ["Dallas Goedert","TE","PHI",130.3],["Justin Herbert","QB","LAC",131.2],
+  ["Trevor Lawrence","QB","JAX",132.5],["C.J. Stroud","QB","HOU",133.3],
+  ["Tua Tagovailoa","QB","MIA",134.5],["Anthony Richardson","QB","IND",135.3],
+  ["Kyler Murray","QB","ARI",136.5],["MarShawn Lloyd","RB","GB",138.3],
+  ["Jaylen Wright","RB","MIA",139.5],["Kyle Pitts","TE","ATL",152.5],
+  ["Isaiah Likely","TE","BAL",153.3],["Christian Watson","WR","GB",163.5],
+];
+
+const PLAYERS = RAW.map((r, i) => ({ id: i + 1, name: r[0], pos: r[1], team: r[2], adp: r[3], bye: BYE[r[2]] || 9 }));
+const PLAYERS_DK = RAW_DK.map((r, i) => ({ id: i + 1, name: r[0], pos: r[1], team: r[2], adp: r[3], bye: BYE[r[2]] || 9 }));
+
+function getPlayers(platform) {
+  return platform === 'dk' ? PLAYERS_DK : PLAYERS;
+}
 
 // ── ENHANCED INTELLIGENCE ENGINE ─────────────────────────────────────────────
 
@@ -158,15 +217,16 @@ function buildTiers(players) {
 
 // Compute positional scarcity: how fast each pos is going vs ADP pace
 // Returns { QB: rate, RB: rate, WR: rate, TE: rate } where rate>1 = rushing
-function computeScarcity(drafted, currentPick) {
+function computeScarcity(drafted, currentPick, playerPool) {
+  const pool = playerPool || PLAYERS;
   const counts = { QB:0, RB:0, WR:0, TE:0 };
   drafted.forEach(d => {
-    const p = PLAYERS.find(pl => pl.id === d.playerId);
+    const p = pool.find(pl => pl.id === d.playerId);
     if (p && counts[p.pos] !== undefined) counts[p.pos]++;
   });
   // Expected count at this pick based on ADP distribution
   const expected = { QB:0, RB:0, WR:0, TE:0 };
-  PLAYERS.forEach(p => {
+  pool.forEach(p => {
     if (p.adp <= currentPick && expected[p.pos] !== undefined) expected[p.pos]++;
   });
   const rate = {};
@@ -223,7 +283,8 @@ function scorePlayer(player, currentPick, myRoster, tierMap, scarcity, mySlot) {
   const tierInfo = tierMap?.[player.id];
   if (tierInfo?.lastInTier) {
     score += 20;
-    reasons.push({ t:'tier', text:`Last T${tierInfo.tier} ${player.pos}` });
+    const tierLabel = tierInfo.tier === 1 ? `Last ${player.pos}1 Available` : `Last T${tierInfo.tier} ${player.pos}`;
+    reasons.push({ t:'tier', text:tierLabel });
   }
 
   // 6. POSITIONAL SCARCITY — boost score if position running hot
@@ -264,7 +325,7 @@ function scorePlayer(player, currentPick, myRoster, tierMap, scarcity, mySlot) {
 }
 
 // Build a plain-text board summary for AI prompt
-function buildBoardSummary(myRoster, drafted, available, currentPick, mySlot, scarcity, tierMap) {
+function buildBoardSummary(myRoster, drafted, available, currentPick, mySlot, scarcity, tierMap, platform) {
   const myPicks = myRoster.map(p => {
     const pk = drafted.find(d => d.isMine && d.playerId === p.id);
     return `${pickToRound(pk?.pick||currentPick)} ${p.pos} ${p.name} (${p.team})`;
@@ -276,7 +337,7 @@ function buildBoardSummary(myRoster, drafted, available, currentPick, mySlot, sc
     return `${p.pos} ${p.name} ADP${p.adp.toFixed(0)}${t?.lastInTier?' [LAST IN TIER]':''}${s>1.25?' [POS RUSHING]':''}`;
   }).join(', ');
   const recentOff = drafted.slice(-6).map(d => {
-    const p = PLAYERS.find(pl => pl.id === d.playerId);
+    const p = [...PLAYERS, ...PLAYERS_DK].find(pl => pl.id === d.playerId && pl.name);
     return p ? `${p.pos} ${p.name}` : '';
   }).filter(Boolean).join(', ');
   const scarcStr = Object.entries(scarcity||{}).map(([pos,r])=>
@@ -294,6 +355,7 @@ function buildBoardSummary(myRoster, drafted, available, currentPick, mySlot, sc
     : 'not tracked';
 
   return `
+PLATFORM: ${platform === 'dk' ? 'DraftKings (Full PPR)' : 'Underdog (Half PPR)'}
 PICK: ${currentPick} (Round ${Math.ceil(currentPick/12)}) | MY SLOT: ${mySlot}
 MY ROSTER (${myRoster.length}/18): QB:${counts.QB}/2 RB:${counts.RB}/5 WR:${counts.WR}/7 TE:${counts.TE}/2
 PICKS: ${myPicks.join(' | ') || 'none yet'}
@@ -308,11 +370,12 @@ TOP 8 AVAILABLE (by ADP): ${top8}
 // ── OPPONENT INTEL HELPERS ─────────────────────────────────────────────────────
 
 // Get full roster for a given slot from pick history
-function getSlotRoster(drafted, slot) {
+function getSlotRoster(drafted, slot, playerPool) {
+  const pool = playerPool || PLAYERS;
   if (slot < 1 || slot > 12) return [];
   return drafted
     .filter(d => pickToSlot(d.pick) === slot)
-    .map(d => PLAYERS.find(p => p.id === d.playerId))
+    .map(d => pool.find(p => p.id === d.playerId))
     .filter(Boolean);
 }
 
@@ -420,46 +483,129 @@ function generateOpponentInsights(myRoster, leftRoster, rightRoster, currentPick
 // ── PORTFOLIO INTEGRATION ──────────────────────────────────────────────────
 const PORTFOLIO_KEY = 'bbm_drafts_v1';
 const RANKINGS_KEY  = 'bbm_custom_rankings_v1';
+const ADP_CACHE_KEY = 'bbm_adp_cache_v1';
 
 async function loadPortfolio() {
-  try { const r = await window.storage.get(PORTFOLIO_KEY); return r ? JSON.parse(r.value) : []; }
+  try { const v = localStorage.getItem(PORTFOLIO_KEY); return v ? JSON.parse(v) : []; }
   catch { return []; }
 }
+async function savePortfolio(drafts) {
+  try { localStorage.setItem(PORTFOLIO_KEY, JSON.stringify(drafts)); } catch {}
+}
 async function loadCustomRankings() {
-  try { const r = await window.storage.get(RANKINGS_KEY); return r ? JSON.parse(r.value) : null; }
+  try { const v = localStorage.getItem(RANKINGS_KEY); return v ? JSON.parse(v) : null; }
   catch { return null; }
 }
 async function saveCustomRankings(data) {
-  try { await window.storage.set(RANKINGS_KEY, JSON.stringify(data)); } catch {}
+  try {
+    if (data) localStorage.setItem(RANKINGS_KEY, JSON.stringify(data));
+    else localStorage.removeItem(RANKINGS_KEY);
+  } catch {}
 }
 
-// Parse rankings CSV: each line "PlayerName,ADP" or "Rank,PlayerName,..."
+// Normalize player name for live ADP fuzzy matching
+function normalizeName(n) {
+  return (n || '').toLowerCase().replace(/['.,-]/g, '').replace(/\s+/g, ' ').trim();
+}
+async function loadCachedADP() {
+  try { const v = localStorage.getItem(ADP_CACHE_KEY); return v ? JSON.parse(v) : null; }
+  catch { return null; }
+}
+async function saveCachedADP(data) {
+  try { localStorage.setItem(ADP_CACHE_KEY, JSON.stringify(data)); } catch {}
+}
+
+// Parse a single CSV line, respecting quoted fields (handles apostrophes, commas in names)
+function parseCSVLine(line) {
+  const result = [];
+  let cur = '', inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuote = !inQuote; }
+    else if (ch === ',' && !inQuote) { result.push(cur.trim()); cur = ''; }
+    else { cur += ch; }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+// Parse rankings CSV — handles ETR/FantasyPros/generic formats.
+// Returns { normalizedName: rank, ... } keyed by normalizeName(), value = rank (float/int)
 function parseRankingsCSV(raw) {
-  const lines = raw.trim().split('\n').filter(Boolean);
+  // Strip UTF-8 BOM if present
+  const cleaned = raw.replace(/^﻿/, '');
+  const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return {};
+
   const result = {};
-  lines.forEach((line, i) => {
-    const parts = line.split(',').map(s => s.trim().replace(/^"|"$/g,''));
-    if (parts.length === 0) return;
-    // Try to find the player name — look for longest string token
-    const numericParts = parts.filter(p => !isNaN(parseFloat(p)));
+  const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim());
+
+  // Find name column: 'name', 'player', 'player name'
+  const nameIdx = ['name', 'player', 'player name'].reduce((found, h) => found >= 0 ? found : headers.indexOf(h), -1);
+
+  // Find rank column: accept many common naming patterns used by ETR, FantasyPros, etc.
+  // NOTE: intentionally checked AFTER name so 'adp' is only a rank fallback, not confused with bye/team cols
+  const RANK_COLS = ['etr rank', 'etrrank', 'overall rank', 'overall', 'rank', 'ovr', 'rk', 'adp'];
+  const rankIdx = RANK_COLS.reduce((found, h) => found >= 0 ? found : headers.indexOf(h), -1);
+
+  if (nameIdx !== -1) {
+    // Structured CSV with a name column — use rank column or fall back to row position
+    // Row position is correct when the file is pre-sorted by rank (standard export behavior)
+    for (let i = 1; i < lines.length; i++) {
+      const parts = parseCSVLine(lines[i]);
+      const rawName = (parts[nameIdx] || '').trim();
+      const key = normalizeName(rawName);
+      if (!key || key.length < 2) continue;
+      const rankVal = (rankIdx >= 0 && parts[rankIdx]) ? parseFloat(parts[rankIdx]) : i;
+      if (!isNaN(rankVal)) result[key] = rankVal;
+    }
+    return result;
+  }
+
+  // Generic fallback: simple 2-col CSVs (Name,Rank or Rank,Name)
+  const startIdx = isNaN(parseFloat(parseCSVLine(lines[0])[1])) ? 1 : 0;
+  for (let i = startIdx; i < lines.length; i++) {
+    const parts = parseCSVLine(lines[i]);
+    if (parts.length < 2) continue;
     const textParts = parts.filter(p => isNaN(parseFloat(p)) && p.length > 2);
-    const name = textParts[0];
-    const rank = numericParts[0] ? parseFloat(numericParts[0]) : i + 1;
-    if (name && name.length > 2) result[name.toLowerCase()] = rank;
-  });
-  return result; // { "ja'marr chase": 1.4, ... }
+    const numericParts = parts.filter(p => !isNaN(parseFloat(p)));
+    const key = normalizeName(textParts[0] || '');
+    // Use row index as rank — avoids picking up bye week / jersey number columns
+    const rank = numericParts[0] ? parseFloat(numericParts[0]) : i;
+    if (key && key.length > 2) result[key] = rank;
+  }
+  return result;
 }
 
-// Get effective ADP: custom rankings override if present
-function effectiveAdp(player, customRankings) {
-  if (!customRankings) return player.adp;
-  const key = player.name.toLowerCase();
-  // Try exact match
-  if (customRankings[key] !== undefined) return customRankings[key];
-  // Try last name match
-  const lastName = player.name.split(' ').slice(-1)[0].toLowerCase();
-  const fuzzy = Object.entries(customRankings).find(([k]) => k.includes(lastName) || lastName.includes(k.split(' ').slice(-1)[0]));
-  return fuzzy ? fuzzy[1] : player.adp;
+// Get effective ADP: customRankings > liveADP > hardcoded
+function effectiveAdp(player, customRankings, liveADP) {
+  // 1. Custom imported rankings take highest priority
+  if (customRankings) {
+    const key = normalizeName(player.name);
+    // Exact normalized match
+    if (customRankings[key] !== undefined) return customRankings[key];
+    // Fuzzy: require BOTH first AND last name to match (prevents "Smith" matching any Smith)
+    const parts = key.split(' ');
+    if (parts.length >= 2) {
+      const fuzzy = Object.entries(customRankings).find(([k]) => {
+        const kp = k.split(' ');
+        return kp.length >= 2 &&
+               kp[kp.length - 1] === parts[parts.length - 1] &&
+               kp[0] === parts[0];
+      });
+      if (fuzzy) return fuzzy[1];
+    }
+    // Player not in custom rankings — sort below all ranked players
+    return 999;
+  }
+  // 2. Live ADP from FantasyPros Best Ball
+  if (liveADP?.players?.length) {
+    const norm = normalizeName(player.name);
+    const match = liveADP.players.find(p => normalizeName(p.name) === norm);
+    if (match) return match.adp;
+  }
+  // 3. Hardcoded fallback
+  return player.adp;
 }
 
 // Real-time portfolio combo check — called before logging a pick
@@ -568,6 +714,7 @@ function rosterCounts(roster) {
 
 export default function App() {
   const [screen, setScreen] = useState("setup");
+  const [platform, setPlatform] = useState('underdog'); // 'underdog' | 'dk'
   const [mySlot, setMySlot] = useState(6);
   const [drafted, setDrafted] = useState([]);
   const [currentPick, setCurrentPick] = useState(1);
@@ -581,18 +728,38 @@ export default function App() {
   const [billyQueue, setBillyQueue] = useState([]);
   const [billyCount, setBillyCount] = useState(0);
   const [queueEntryActive, setQueueEntryActive] = useState(null);
+  const [liveADP, setLiveADP] = useState(null);
+  const [adpLoading, setAdpLoading] = useState(false);
 
-  // Load portfolio + custom rankings from storage on mount
+  // Load portfolio + custom rankings + cached ADP from storage on mount
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [drafts, rankings] = await Promise.all([loadPortfolio(), loadCustomRankings()]);
+      const [drafts, rankings, cachedAdp] = await Promise.all([
+        loadPortfolio(), loadCustomRankings(), loadCachedADP()
+      ]);
       if (!mounted) return;
       setSavedDrafts(drafts);
       setCustomRankings(rankings);
+      if (cachedAdp) setLiveADP(cachedAdp);
     })();
     return () => { mounted = false; };
   }, []);
+
+  // Fetch live ADP whenever platform changes
+  useEffect(() => {
+    const format = platform === 'dk' ? 'ppr' : 'half-ppr';
+    setAdpLoading(true);
+    fetch(`/api/adp?format=${format}`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => {
+        const stamped = { ...data, fetchedAt: Date.now() };
+        setLiveADP(stamped);
+        saveCachedADP(stamped);
+      })
+      .catch(() => {}) // fail silently — cache or hardcoded fallback used
+      .finally(() => setAdpLoading(false));
+  }, [platform]);
 
   const handleImportRankings = async (raw) => {
     const parsed = parseRankingsCSV(raw);
@@ -610,20 +777,21 @@ export default function App() {
   const isDone = currentPick > TOTAL;
 
   const takenIds = new Set(drafted.map(d => d.playerId));
-  // Apply custom rankings to player pool
+  const activePlayers = getPlayers(platform);
+  // Apply custom rankings > live ADP > hardcoded to player pool
   const available = useMemo(() =>
-    PLAYERS.filter(p => !takenIds.has(p.id))
-      .map(p => ({ ...p, effectiveAdp: effectiveAdp(p, customRankings) }))
+    activePlayers.filter(p => !takenIds.has(p.id))
+      .map(p => ({ ...p, effectiveAdp: effectiveAdp(p, customRankings, liveADP) }))
       .sort((a, b) => a.effectiveAdp - b.effectiveAdp),
-    [takenIds, customRankings]
+    [takenIds, customRankings, liveADP, platform]
   );
   const myRoster = drafted
     .filter(d => d.isMine)
-    .map(d => PLAYERS.find(p => p.id === d.playerId))
+    .map(d => activePlayers.find(p => p.id === d.playerId))
     .filter(Boolean);
 
   const tierMap = useMemo(() => buildTiers(available), [available]);
-  const scarcity = useMemo(() => computeScarcity(drafted, currentPick), [drafted, currentPick]);
+  const scarcity = useMemo(() => computeScarcity(drafted, currentPick, activePlayers), [drafted, currentPick, platform]);
 
   const recs = useMemo(() => {
     return available
@@ -685,11 +853,15 @@ export default function App() {
       )}
       {screen === "setup" && (
         <SetupScreen mySlot={mySlot} setMySlot={setMySlot}
-          onStart={(mode, tgts, speed) => {
+          platform={platform} setPlatform={setPlatform}
+          onStart={(opts) => {
+            const mode = opts?.draftMode || opts || 'full';
+            const tgts = opts?.targets || [];
+            const speed = opts?.draftSpeed || 30;
             setFastMode(mode === 'fast');
             setAutopilot(mode === 'autopilot');
-            setDraftSpeed(speed || 30);
-            setTargets(tgts || []);
+            setDraftSpeed(speed);
+            setTargets(tgts);
             setScreen('draft');
           }}
           onBillyCatcher={() => setScreen('billy')}
@@ -697,7 +869,12 @@ export default function App() {
           customRankings={customRankings}
           onImportRankings={handleImportRankings}
           onClearRankings={handleClearRankings}
+          onPortfolio={() => setScreen('portfolio')}
+          adpStatus={{ loading: adpLoading, fetchedAt: liveADP?.fetchedAt, count: liveADP?.players?.length }}
         />
+      )}
+      {screen === "portfolio" && (
+        <PortfolioScreen savedDrafts={savedDrafts} onBack={() => setScreen('setup')} />
       )}
       {screen === "billy" && (
         <BillyCatcherScreen
@@ -753,6 +930,8 @@ export default function App() {
           savedDrafts={savedDrafts}
           customRankings={customRankings}
           targets={targets}
+          platform={platform}
+          players={activePlayers}
           onLogMine={p => logPick(p, true)}
           onLogOpp={p => logPick(p, false)}
           onSkip={skipPick}
@@ -765,6 +944,20 @@ export default function App() {
           queueEntry={queueEntryActive}
           onReset={reset}
           onQueueDone={handleQueueEntryDone}
+          onSaveDraft={() => {
+            const draftRecord = {
+              id: Date.now(),
+              slot: mySlot,
+              date: Date.now(),
+              picks: drafted.map(d => {
+                const p = activePlayers.find(pl => pl.id === d.playerId);
+                return { slot: pickToSlot(d.pick), playerName: p?.name, pos: p?.pos, pick: d.pick, isMine: d.isMine };
+              }),
+            };
+            const updated = [...savedDrafts, draftRecord];
+            setSavedDrafts(updated);
+            savePortfolio(updated);
+          }}
         />
       )}
     </>
@@ -772,34 +965,25 @@ export default function App() {
 }
 
 // ── SETUP ─────────────────────────────────────────────────────────────────────
-function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCount, customRankings, onImportRankings, onClearRankings }) {
-  const [showRankings, setShowRankings] = useState(false);
-  const [rankingsPaste, setRankingsPaste] = useState('');
-  const [importing, setImporting] = useState(false);
+function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBillyCatcher, savedDraftsCount, customRankings, onImportRankings, onClearRankings, onPortfolio, adpStatus }) {
   const [draftMode, setDraftMode] = useState('full');
-  const [draftSpeed, setDraftSpeed] = useState(30);
-  const [targetInput, setTargetInput] = useState('');
-  const [targets, setTargets] = useState([]);
+  const [draftSpeed, setDraftSpeed] = useState(platform === 'dk' ? 30 : 20);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
 
-  const handleImport = async () => {
-    setImporting(true);
-    await onImportRankings(rankingsPaste);
-    setImporting(false);
-    setShowRankings(false);
-    setRankingsPaste('');
-  };
-
-  const addTarget = () => {
-    if (!targetInput.trim()) return;
-    const match = fuzzyMatchPlayer(targetInput.trim(), PLAYERS);
-    if (match && !targets.find(t => t.id === match.id)) {
-      setTargets(prev => [...prev, match]);
-    }
-    setTargetInput('');
-  };
+  useEffect(() => { setDraftSpeed(platform === 'dk' ? 30 : 20); }, [platform]);
 
   const rankingsCount = customRankings ? Object.keys(customRankings).length : 0;
+
+  // ADP freshness label
+  const adpLabel = (() => {
+    if (adpStatus?.loading) return { text: 'ADP: Updating…', color: T.dim };
+    if (adpStatus?.fetchedAt) {
+      const mins = Math.round((Date.now() - adpStatus.fetchedAt) / 60000);
+      const ago = mins < 2 ? 'just now' : mins < 60 ? `${mins}m ago` : `${Math.round(mins/60)}h ago`;
+      return { text: `● ADP live · ${adpStatus.count} players · ${ago}`, color: T.green };
+    }
+    return { text: '○ ADP: hardcoded fallback', color: T.amber };
+  })();
 
   const MODES = [
     { id:'full',      label:'FULL DRAFT',      icon:'📋', sub:'Slow drafts · Log by player name', color: T.gold },
@@ -888,16 +1072,45 @@ function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCo
         </div>
 
         <p style={{
-          fontSize: 13, color: T.mute, lineHeight: 1.6, margin: "10px 0 0",
+          fontSize: 13, color: T.mute, lineHeight: 1.6, margin: "10px 0 6px",
           maxWidth: 340,
         }}>
-          Real-time pick intelligence for Underdog Best Ball Mania.
+          Real-time pick intelligence for Best Ball Mania.
           Run alongside your live draft for tier alerts, stack detection,
           opponent tracking, and AI-powered pick advice.
         </p>
+        <div style={{
+          fontFamily: "'Share Tech Mono', monospace",
+          fontSize: 9, color: adpLabel.color, letterSpacing: 1,
+        }}>{adpLabel.text}</div>
       </div>
 
       <div style={{ padding: "20px 20px 40px", flex: 1, overflowY: "auto" }}>
+
+        {/* PLATFORM SELECTOR */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:10 }}>SELECT PLATFORM</div>
+          <div style={{ display:"flex", gap:10, marginBottom:4 }}>
+            {[
+              { id:'underdog', label:'UNDERDOG', sub:'Half PPR  •  20s timer', color:'#5B8CFF' },
+              { id:'dk',       label:'DRAFTKINGS', sub:'Full PPR  •  30s timer', color:'#1DD882' },
+            ].map(p => (
+              <button key={p.id} onClick={() => setPlatform(p.id)} style={{
+                flex:1, padding:"14px 10px", borderRadius:10,
+                background: platform === p.id ? `${p.color}22` : T.card,
+                border: platform === p.id ? `2px solid ${p.color}` : `1px solid ${T.border}`,
+                color: platform === p.id ? p.color : T.mute,
+                fontFamily:"'Barlow Condensed',sans-serif", fontSize:18, fontWeight:900,
+                cursor:"pointer", textAlign:"center", letterSpacing:1,
+                transition:"all 0.15s",
+              }}>
+                <div>{p.label}</div>
+                <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, marginTop:4, opacity:0.7 }}>{p.sub}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Slot picker */}
         <div style={{
           background: T.panel, borderRadius: 12,
@@ -937,99 +1150,66 @@ function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCo
             fontFamily: "'Share Tech Mono', monospace",
             fontSize: 11, color: T.mute, lineHeight: 1.6,
           }}>
-            Slot <span style={{color:T.gold,fontWeight:700}}>{mySlot}</span> ·{" "}
-            {mySlot<=3?"Early — elite anchor pick":mySlot>=10?"Late — turn power builds":"Mid — balanced construction"}
+            Slot <span style={{color:T.gold,fontWeight:700}}>{mySlot}</span>
           </div>
         </div>
 
-        {/* Rankings import */}
-        <div style={{
-          background: T.panel, borderRadius: 12,
-          border: `1px solid ${customRankings ? T.teal+"44" : T.border}`,
-          padding: 18, marginBottom: 14,
+        {/* BIG ENTER DRAFT ROOM BUTTON */}
+        <button onClick={() => onStart({ draftMode, draftSpeed, platform })} style={{
+          width:"100%", padding:"20px", marginTop:4, marginBottom:16,
+          background:`linear-gradient(135deg, ${T.gold}, #FFB830)`,
+          color:T.bg, border:"none", borderRadius:14,
+          fontFamily:"'Barlow Condensed',sans-serif", fontSize:28, fontWeight:900,
+          letterSpacing:1.5, cursor:"pointer",
+          boxShadow:`0 6px 32px rgba(255,209,102,0.5)`,
         }}>
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-          }}>
-            <div>
-              <div style={{
-                fontFamily: "'Share Tech Mono', monospace",
-                fontSize: 9, letterSpacing: 2, color: T.dim, marginBottom: 4,
-              }}>CUSTOM RANKINGS</div>
-              <div style={{fontSize: 13, color: T.text, fontWeight: 600}}>
-                {customRankings
-                  ? `✓ ${rankingsCount} players loaded`
-                  : "Import ETR, 4for4, FantasyLife…"}
-              </div>
-              {customRankings && (
-                <div style={{fontSize: 11, color: T.teal, marginTop: 2, fontFamily:"'Share Tech Mono',monospace"}}>
-                  Overrides ADP in recommendation engine
-                </div>
-              )}
-            </div>
-            <div style={{display:"flex",gap:6}}>
-              {customRankings && (
-                <button onClick={onClearRankings} style={{
-                  padding: "6px 10px", background: "transparent",
-                  color: T.dim, border: `1px solid ${T.border}`,
-                  borderRadius: 6, fontFamily:"'Share Tech Mono',monospace",
-                  fontSize: 10, cursor: "pointer", letterSpacing: 0.8,
-                }}>CLEAR</button>
-              )}
-              <button onClick={()=>setShowRankings(v=>!v)} style={{
-                padding: "6px 12px",
-                background: customRankings ? `${T.teal}18` : T.card,
-                color: customRankings ? T.teal : T.mute,
-                border: `1px solid ${customRankings ? T.teal+"44" : T.border}`,
-                borderRadius: 6,
-                fontFamily: "'Barlow Condensed',sans-serif",
-                fontSize: 13, fontWeight: 700, cursor: "pointer",
-              }}>{customRankings ? "UPDATE" : "IMPORT"}</button>
-            </div>
-          </div>
+          ENTER DRAFT ROOM →
+        </button>
 
-          {showRankings && (
-            <div style={{marginTop: 14, animation:"slide-down 0.2s ease"}}>
-              <div style={{
-                fontSize: 12, color: T.mute, marginBottom: 8, lineHeight: 1.6,
-              }}>
-                Paste CSV rankings — any format works. One player per line.
-                Examples: <span style={{fontFamily:"'Share Tech Mono',monospace",color:T.dim}}>
-                  "1,Ja'Marr Chase,WR"</span> or <span style={{fontFamily:"'Share Tech Mono',monospace",color:T.dim}}>
-                  "Chase,1.4"</span>
-              </div>
-              <textarea
-                value={rankingsPaste}
-                onChange={e=>setRankingsPaste(e.target.value)}
-                placeholder={`Paste rankings here...\ne.g.:\n1,Ja'Marr Chase,WR,CIN\n2,Bijan Robinson,RB,ATL\n3,Justin Jefferson,WR,MIN`}
-                rows={8}
-                style={{
-                  width: "100%", padding: "10px 12px",
-                  background: T.card, border: `1px solid ${T.hi}`,
-                  color: T.text, borderRadius: 8,
-                  fontFamily: "'Share Tech Mono',monospace",
-                  fontSize: 11, outline: "none", resize: "vertical",
-                  lineHeight: 1.6,
-                }}
-              />
-              <div style={{display:"flex",gap:8,marginTop:8}}>
-                <button onClick={handleImport} disabled={!rankingsPaste.trim()||importing} style={{
-                  flex:1, padding: "10px",
-                  background: rankingsPaste.trim() ? T.teal : T.card,
-                  color: rankingsPaste.trim() ? T.bg : T.dim,
-                  border: "none", borderRadius: 8,
-                  fontFamily: "'Barlow Condensed',sans-serif",
-                  fontSize: 15, fontWeight: 900, cursor: rankingsPaste.trim()?"pointer":"default",
-                }}>
-                  {importing ? "PARSING…" : "IMPORT RANKINGS"}
-                </button>
-                <button onClick={()=>setShowRankings(false)} style={{
-                  padding: "10px 14px", background:"transparent",
-                  color:T.dim, border:`1px solid ${T.border}`,
-                  borderRadius:8, fontFamily:"'Barlow Condensed',sans-serif",
-                  fontSize:13,fontWeight:700,cursor:"pointer",
-                }}>CANCEL</button>
-              </div>
+        {/* RANKINGS IMPORT (file picker) */}
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:8 }}>
+            CUSTOM RANKINGS
+          </div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            <label style={{
+              flex:1, padding:"11px 14px", borderRadius:8,
+              background:T.card, border:`1px solid ${T.border}`,
+              color: rankingsCount > 0 ? T.green : T.mute,
+              fontFamily:"'Share Tech Mono',monospace", fontSize:10,
+              cursor:"pointer", letterSpacing:1, textAlign:"center",
+              display:"block",
+            }}>
+              {rankingsCount > 0 ? `✓ ${rankingsCount} PLAYERS IMPORTED` : '📂  IMPORT RANKINGS (.CSV)'}
+              <input type="file" accept=".csv,.xlsx,.xls" style={{ display:"none" }} onChange={async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                try {
+                  let text = '';
+                  if (file.name.endsWith('.csv')) {
+                    text = await file.text();
+                  } else {
+                    alert('Please export your rankings as CSV from Excel/Google Sheets, then import the CSV file.');
+                    return;
+                  }
+                  await onImportRankings(text);
+                } catch(err) {
+                  alert('Could not read file. Please export as CSV.');
+                }
+                e.target.value = '';
+              }} />
+            </label>
+            {rankingsCount > 0 && (
+              <button onClick={onClearRankings} style={{
+                padding:"11px 14px", borderRadius:8, background:`${T.red}22`,
+                border:`1px solid ${T.red}44`, color:T.red,
+                fontFamily:"'Share Tech Mono',monospace", fontSize:10, cursor:"pointer",
+              }}>CLEAR</button>
+            )}
+          </div>
+          {rankingsCount === 0 && (
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, marginTop:6, lineHeight:1.6 }}>
+              ETR CSV export works directly — just download and drop in. Also supports any CSV with player name + rank columns.
             </div>
           )}
         </div>
@@ -1044,10 +1224,11 @@ function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCo
             fontSize:9,color:T.dim,letterSpacing:2,marginBottom:10,
           }}>QUICK START</div>
           {[
-            ["01", "Open Underdog in another tab"],
-            ["02", "When opponents pick → search player → OPP"],
-            ["03", "When you pick → tap a REC or search → MY PICK"],
-            ["04", "Use SKIP→ if you miss a pick to keep sync"],
+            ["01", "Pick your platform (Underdog or DraftKings) and draft slot above"],
+            ["02", "Tap ENTER DRAFT ROOM to start"],
+            ["03", "When another team picks — search their player and tap THEIR PICK"],
+            ["04", "When it's your turn — tap one of the highlighted recommendations"],
+            ["05", "Tap FINISH DRAFT when done to save your roster"],
           ].map(([n, text]) => (
             <div key={n} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:7}}>
               <span style={{
@@ -1102,20 +1283,20 @@ function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCo
           {/* Speed selector for fast + autopilot */}
           {(draftMode === 'fast' || draftMode === 'autopilot') && (
             <div style={{ marginTop:12 }}>
-              <div style={{
-                fontFamily:"'Share Tech Mono',monospace",
-                fontSize:9, color:T.dim, letterSpacing:1.5, marginBottom:8,
-              }}>PICK TIMER (seconds per pick)</div>
-              <div style={{ display:"flex", gap:6 }}>
-                {[20,30,60,90].map(s => (
-                  <button key={s} onClick={() => setDraftSpeed(s)} style={{
-                    flex:1, padding:"8px 4px",
-                    background: draftSpeed===s ? T.purple : T.card,
-                    color: draftSpeed===s ? T.bg : T.mute,
-                    border:`1px solid ${draftSpeed===s ? T.purple : T.border}`,
-                    borderRadius:6, fontFamily:"'Barlow Condensed',sans-serif",
-                    fontSize:16, fontWeight:900, cursor:"pointer",
-                  }}>{s}s</button>
+              <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:8 }}>TIMER</div>
+              <div style={{ display:"flex", gap:8 }}>
+                {[
+                  { val: platform === 'dk' ? 30 : 20, label: platform === 'underdog' ? 'LIVE (20s)' : 'LIVE (30s)' },
+                  { val: 0, label: 'SLOW DRAFT' },
+                ].map(opt => (
+                  <button key={opt.val} onClick={() => setDraftSpeed(opt.val)} style={{
+                    flex:1, padding:"10px 8px", borderRadius:8,
+                    background: draftSpeed === opt.val ? `${T.gold}22` : T.card,
+                    border: draftSpeed === opt.val ? `1px solid ${T.gold}` : `1px solid ${T.border}`,
+                    color: draftSpeed === opt.val ? T.gold : T.mute,
+                    fontFamily:"'Share Tech Mono',monospace", fontSize:10, cursor:"pointer",
+                    letterSpacing:1,
+                  }}>{opt.label}</button>
                 ))}
               </div>
               {draftMode === 'autopilot' && (
@@ -1126,7 +1307,7 @@ function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCo
                   fontSize:9, color:T.purple, lineHeight:1.6,
                 }}>
                   AUTOPILOT will run all opponent picks automatically using ADP simulation.
-                  You only interact when it's YOUR TURN. Phone vibrates + screen flashes when your pick arrives.
+                  You only interact when it's YOUR TURN.
                 </div>
               )}
             </div>
@@ -1148,70 +1329,8 @@ function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCo
 
         {/* Cheat sheet modal */}
         {showCheatSheet && (
-          <CheatSheetModal slot={mySlot} targets={targets} onClose={() => setShowCheatSheet(false)}/>
+          <CheatSheetModal slot={mySlot} targets={[]} onClose={() => setShowCheatSheet(false)}/>
         )}
-
-        {/* Pre-draft target list */}
-        <div style={{
-          background: T.panel, borderRadius: 12,
-          border: `1px solid ${T.border}`, padding: 16, marginBottom: 14,
-        }}>
-          <div style={{
-            fontFamily: "'Share Tech Mono',monospace",
-            fontSize: 9, letterSpacing: 2, color: T.dim, marginBottom: 8,
-          }}>TARGET LIST — get alerted when these players are taken</div>
-
-          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            <input
-              value={targetInput}
-              onChange={e => setTargetInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addTarget()}
-              placeholder="Add a target (e.g. Chase, Allen, Bowers…)"
-              style={{
-                flex: 1, padding: "8px 10px",
-                background: T.card, border: `1px solid ${T.hi}`,
-                color: T.text, borderRadius: 6,
-                fontFamily: "'Barlow',sans-serif", fontSize: 13, outline: "none",
-              }}
-            />
-            <button onClick={addTarget} style={{
-              padding: "8px 12px", background: T.card,
-              color: T.amber, border: `1px solid ${T.amber}44`,
-              borderRadius: 6, fontFamily: "'Barlow Condensed',sans-serif",
-              fontSize: 14, fontWeight: 900, cursor: "pointer",
-            }}>+</button>
-          </div>
-
-          {targets.length > 0 ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {targets.map(t => (
-                <div key={t.id} style={{
-                  display: "flex", alignItems: "center", gap: 5,
-                  padding: "4px 8px",
-                  background: POS_C[t.pos]?.bg,
-                  border: `1px solid ${POS_C[t.pos]?.fg}44`,
-                  borderRadius: 5,
-                }}>
-                  <PosBadge pos={t.pos}/>
-                  <span style={{ fontSize: 12, color: T.text }}>{t.name.split(' ').slice(-1)[0]}</span>
-                  <button
-                    onClick={() => setTargets(prev => prev.filter(x => x.id !== t.id))}
-                    style={{
-                      background: "none", border: "none",
-                      color: T.dim, cursor: "pointer",
-                      fontSize: 12, padding: "0 2px", lineHeight: 1,
-                    }}
-                  >×</button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{
-              fontFamily: "'Share Tech Mono',monospace",
-              fontSize: 10, color: T.dim,
-            }}>No targets set — add players you're hoping to draft</div>
-          )}
-        </div>
 
         {/* Bookmarklet companion */}
         <BookmarkletInstaller/>
@@ -1245,14 +1364,38 @@ function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCo
           <span style={{color:"#A78BFA",fontSize:18}}>→</span>
         </button>
 
-        <button onClick={() => onStart(draftMode, targets, draftSpeed)} style={{
-          width:"100%", padding:"18px",
+        {savedDraftsCount > 0 && (
+          <button onClick={onPortfolio} style={{
+            width:"100%", marginBottom:10, padding:"14px 18px",
+            background:`${T.green}12`, border:`1px solid ${T.green}33`,
+            borderRadius:12, cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:"space-between",
+            fontFamily:"'Barlow',sans-serif",
+          }}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{
+                width:36,height:36,borderRadius:8,
+                background:`${T.green}20`,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontSize:18,
+              }}>📊</div>
+              <div style={{textAlign:"left"}}>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,fontWeight:900,color:T.green,letterSpacing:0.5}}>PORTFOLIO ANALYTICS</div>
+                <div style={{fontSize:11,color:T.dim,marginTop:2}}>{savedDraftsCount} draft{savedDraftsCount!==1?'s':''} · exposure &amp; stack analysis</div>
+              </div>
+            </div>
+            <span style={{color:T.green,fontSize:18}}>→</span>
+          </button>
+        )}
+
+        {/* Bottom Enter Draft Room button */}
+        <button onClick={() => onStart({ draftMode, draftSpeed, platform })} style={{
+          width:"100%", padding:"20px", marginTop:8,
           background:`linear-gradient(135deg, ${T.gold}, #FFB830)`,
-          color:T.bg, border:"none", borderRadius:12,
-          fontFamily:"'Barlow Condensed',sans-serif",
-          fontSize:24, fontWeight:900, letterSpacing:1,
-          cursor:"pointer",
-          boxShadow:`0 4px 24px ${T.gold}44`,
+          color:T.bg, border:"none", borderRadius:14,
+          fontFamily:"'Barlow Condensed',sans-serif", fontSize:28, fontWeight:900,
+          letterSpacing:1.5, cursor:"pointer",
+          boxShadow:`0 6px 32px rgba(255,209,102,0.5)`,
         }}>
           ENTER DRAFT ROOM →
         </button>
@@ -1264,7 +1407,8 @@ function SetupScreen({ mySlot, setMySlot, onStart, onBillyCatcher, savedDraftsCo
 // ── DRAFT SCREEN ──────────────────────────────────────────────────────────────
 function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoster,
   recs, drafted, flash, tierMap, scarcity, savedDrafts, customRankings,
-  onLogMine, onLogOpp, onSkip, onDone, onReset }) {
+  platform, players, onLogMine, onLogOpp, onSkip, onDone, onReset }) {
+  const allPlayers = players || PLAYERS;
 
   const [search, setSearch] = useState("");
   const [posFilter, setPosFilter] = useState("ALL");
@@ -1376,13 +1520,14 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
             )}
           </div>
           <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-            {isDone && (
-              <button onClick={onDone} style={{
-                padding:"8px 14px", background:T.green, color:T.bg, border:"none",
-                borderRadius:8, fontFamily:"'Barlow Condensed',sans-serif",
-                fontSize:14, fontWeight:900, letterSpacing:1, cursor:"pointer",
-              }}>FINISH</button>
-            )}
+            <button onClick={onDone} style={{
+              padding:"8px 14px",
+              background: isDone ? T.green : `${T.green}22`,
+              color: isDone ? T.bg : T.green,
+              border: isDone ? "none" : `1px solid ${T.green}55`,
+              borderRadius:8, fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:14, fontWeight:900, letterSpacing:1, cursor:"pointer",
+            }}>FINISH DRAFT</button>
 
             {/* PASTE PICK — the bridge button */}
             <button onClick={handlePaste} style={{
@@ -1405,7 +1550,7 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
                 border:`1px solid ${T.border}`, borderRadius:8,
                 fontFamily:"'Share Tech Mono',monospace", fontSize:9,
                 letterSpacing:1, cursor:"pointer",
-              }}>SKIP→</button>
+              }}>MISSED PICK</button>
             )}
             <button onClick={onReset} style={{
               padding:"7px 10px", background:"transparent", color:T.dim,
@@ -1526,7 +1671,7 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
           fontSize:15, fontWeight:700, letterSpacing:0.5,
           whiteSpace:"nowrap", boxShadow:"0 4px 20px rgba(0,0,0,0.4)",
         }}>
-          {flash.isMine ? "✓ YOUR PICK: " : "⬆ OPP LOGGED: "}{flash.name}
+          {flash.isMine ? "✓ YOUR PICK: " : "⬆ THEIR PICK: "}{flash.name}
         </div>
       )}
 
@@ -1562,6 +1707,8 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
           <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:2 }}>
             {recs.map((p, i) => {
               const tierInfo = tierMap?.[p.id];
+              const tierRemainingCount = available.filter(pl => tierMap?.[pl.id]?.tier === tierInfo?.tier && pl.pos === p.pos).length;
+              const showTierAlert = tierInfo?.lastInTier && tierRemainingCount <= 2;
               return (
                 <button key={p.id} onClick={() => { handleLogMine(p); }} style={{
                   flexShrink:0, minWidth:140, padding:"10px 12px",
@@ -1592,12 +1739,12 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
                   )}
                   <div style={{ display:"flex", gap:5, alignItems:"center", marginBottom:4 }}>
                     <PosBadge pos={p.pos}/>
-                    {tierInfo?.lastInTier && (
+                    {showTierAlert && (
                       <span style={{
                         fontFamily:"'Share Tech Mono',monospace",
                         fontSize:7, color:T.amber, letterSpacing:0.5,
                         background:`${T.amber}22`, padding:"1px 4px", borderRadius:2,
-                      }}>LAST T{tierInfo.tier}</span>
+                      }}>{tierInfo.tier === 1 ? `LAST ${p.pos}1` : `LAST T${tierInfo.tier}`}</span>
                     )}
                   </div>
                   <div style={{
@@ -1619,6 +1766,7 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
               myRoster={myRoster} drafted={drafted} available={available}
               currentPick={currentPick} mySlot={mySlot}
               scarcity={scarcity} tierMap={tierMap}
+              platform={platform}
             />
           )}
         </div>
@@ -1641,7 +1789,7 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
                 width:"100%", padding:"10px 10px 10px 32px",
                 background:T.card, border:`1px solid ${T.hi}`,
                 color:T.text, borderRadius:8,
-                fontFamily:"'Barlow',sans-serif", fontSize:15, outline:"none",
+                fontFamily:"'Barlow',sans-serif", fontSize:16, outline:"none",
               }}
             />
             {search && (
@@ -1721,7 +1869,7 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
                 fontSize:11, color:T.dim, textAlign:"center", padding:8,
               }}>No picks logged yet</div>
             ) : recentPicks.map((pk,i) => {
-              const p = PLAYERS.find(pl => pl.id === pk.playerId);
+              const p = allPlayers.find(pl => pl.id === pk.playerId);
               if (!p) return null;
               const pkSlot = pickToSlot(pk.pick);
               return (
@@ -1841,7 +1989,7 @@ function PlayerRow({ player, isMyTurn, currentPick, tierInfo, reasons, onLogMine
               fontFamily:"'Share Tech Mono',monospace",
               fontSize:7, color:T.amber, background:`${T.amber}22`,
               padding:"1px 4px", borderRadius:2, letterSpacing:0.5,
-            }}>LAST T{tierInfo.tier}</span>
+            }}>{tierInfo.tier === 1 ? `LAST ${player.pos}1` : `LAST T${tierInfo.tier}`}</span>
           )}
         </div>
         <div style={{ display:"flex", gap:5, alignItems:"center", flexWrap:"wrap" }}>
@@ -1879,46 +2027,99 @@ function PlayerRow({ player, isMyTurn, currentPick, tierInfo, reasons, onLogMine
           border:`1px solid ${T.border}`, borderRadius:6,
           fontFamily:"'Barlow Condensed',sans-serif",
           fontSize:11, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap",
-        }}>OPP</button>
+        }}>THEIR PICK</button>
       </div>
     </div>
   );
 }
 
 // ── AI ADVISOR ────────────────────────────────────────────────────────────────
-function AiAdvisor({ myRoster, drafted, available, currentPick, mySlot, scarcity, tierMap }) {
+function AiAdvisor({ myRoster, drafted, available, currentPick, mySlot, scarcity, tierMap, platform }) {
   const [advice, setAdvice] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [loadMsg, setLoadMsg] = useState("Analyzing board state…");
+
+  const LOAD_MSGS = [
+    "Analyzing board state…",
+    "Scanning tier breaks…",
+    "Checking stack opportunities…",
+    "Evaluating scarcity signals…",
+    "Building recommendation…",
+  ];
+
+  useEffect(() => {
+    if (!loading) return;
+    let idx = 0;
+    const interval = setInterval(() => {
+      idx = (idx + 1) % LOAD_MSGS.length;
+      setLoadMsg(LOAD_MSGS[idx]);
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const getAdvice = async () => {
     setLoading(true);
+    setLoadMsg("Analyzing board state…");
     setAdvice(null);
     setError(null);
 
-    const summary = buildBoardSummary(myRoster, drafted, available, currentPick, mySlot, scarcity, tierMap);
+    const summary = buildBoardSummary(myRoster, drafted, available, currentPick, mySlot, scarcity, tierMap, platform);
 
-    const systemPrompt = `You are an elite Underdog Best Ball Mania draft advisor. You specialize in 18-round, 12-team, half-PPR best ball drafts where Weeks 15-17 are the playoff weeks. You understand positional scarcity, tier breaks, QB stacking strategy, and roster construction. Be direct and specific. Never hedge with "it depends" — make a clear recommendation.`;
+    const systemPrompt = `You are a Best Ball draft advisor. Return ONLY a ranked pick list in this exact format:
 
-    const userPrompt = `Here is my live draft board:\n\n${summary}\n\nGive me a pick recommendation in exactly 3 sentences:\n1. WHO to take and why (mention the player name and one key reason)\n2. ONE thing to watch for on the rest of this board (tier break, position run, or stack opportunity)\n3. A brief note on my roster construction at this stage\n\nBe specific, confident, and actionable. No generic advice.`;
+Pick 1: [Player Name] ([Team]) — [one sentence reason, max 12 words]
+Pick 2: [Player Name] ([Team]) — [one sentence reason, max 12 words]
+Pick 3: [Player Name] ([Team]) — [one sentence reason, max 12 words]
+⚠️ [One optional alert about positional scarcity, stacking opportunity, or portfolio risk — max 15 words. Omit if nothing urgent.]
+
+Rules:
+- Always exactly 3 picks from the available players listed
+- Picks must be realistic for the current pick number (do NOT recommend players with ADP far above the current pick)
+- Factor in: roster needs, platform scoring (Half PPR for Underdog, Full PPR for DraftKings), positional scarcity, and stacking
+- For Underdog (Half PPR): RB and WR are more equal in value
+- For DraftKings (Full PPR): Receiving RBs and slot WRs have elevated value
+- Critical rules: Don't let user get boxed out at RB (need 3 by round 8). Don't get boxed out at QB (need 2 by round 12). Prioritize team stacking.
+- No paragraphs, no essays, no strategy explanations beyond the one-line reasons`;
+
+    const portfolioData = (() => {
+      try {
+        const raw = localStorage.getItem('bbm_drafts_v1');
+        if (!raw) return null;
+        const drafts = JSON.parse(raw);
+        if (!drafts.length) return null;
+        const exposureMap = {};
+        drafts.forEach(d => (d.roster||[]).forEach(p => {
+          exposureMap[p.name] = (exposureMap[p.name]||0)+1;
+        }));
+        const topExposed = Object.entries(exposureMap).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([name,cnt])=>`${name} ${((cnt/drafts.length)*100).toFixed(0)}%`).join(', ');
+        const underExposed = available.filter(p => !exposureMap[p.name] && p.adp <= 80).slice(0,3).map(p=>p.name).join(', ');
+        return `Portfolio (${drafts.length} drafts): Heavy exposure: ${topExposed}. Missing from portfolio: ${underExposed||'none'}.`;
+      } catch { return null; }
+    })();
+
+    const userPrompt = `Here is my live draft board:\n\n${summary}\n\n${portfolioData ? portfolioData+'\n' : ''}Give me your top 3 picks right now.`;
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 400,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
         }),
       });
       const data = await res.json();
+      if (data.error) throw new Error(data.error);
       const text = data.content?.find(b => b.type === "text")?.text || "";
       if (!text) throw new Error("No response");
       setAdvice(text.trim());
     } catch (e) {
-      setError("Couldn't reach AI advisor. Check connection.");
+      setError(e.message?.includes('not configured')
+        ? "AI advisor requires ANTHROPIC_API_KEY in Vercel settings."
+        : "Couldn't reach AI advisor. Check connection.");
     } finally {
       setLoading(false);
     }
@@ -1963,7 +2164,7 @@ function AiAdvisor({ myRoster, drafted, available, currentPick, mySlot, scarcity
           ))}
           <span style={{
             fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:T.dim,
-          }}>Analyzing board state…</span>
+          }}>{loadMsg}</span>
         </div>
       )}
 
@@ -2006,8 +2207,9 @@ function PosBadge({ pos }) {
 }
 
 // ── RECAP ─────────────────────────────────────────────────────────────────────
-function RecapScreen({ myRoster, drafted, mySlot, onReset, queueEntry, onQueueDone }) {
+function RecapScreen({ myRoster, drafted, mySlot, onReset, queueEntry, onQueueDone, onSaveDraft }) {
   const counts = rosterCounts(myRoster);
+  const [copied, setCopied] = useState(false);
 
   const stacks = useMemo(() => {
     const groups = {};
@@ -2161,9 +2363,29 @@ function RecapScreen({ myRoster, drafted, mySlot, onReset, queueEntry, onQueueDo
           ))}
         </div>
 
+        <button onClick={async () => {
+          const text = `BBM Copilot — Slot ${mySlot}\n` +
+            myDraftedWithPick.map(p => `${p.pick < 999 ? pickToRound(p.pick) : '—'} ${p.pos} ${p.name} ${p.team}`).join('\n');
+          try {
+            await navigator.clipboard.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          } catch {}
+        }} style={{
+          width:"100%", padding:"12px", marginBottom:12,
+          background: copied ? `${T.green}20` : T.card,
+          color: copied ? T.green : T.mute,
+          border:`1px solid ${copied?T.green+"44":T.border}`,
+          borderRadius:8, fontFamily:"'Barlow Condensed',sans-serif",
+          fontSize:15, fontWeight:700, letterSpacing:1, cursor:"pointer",
+          transition:"all 0.2s",
+        }}>
+          {copied ? "✓ COPIED!" : "📋 COPY ROSTER"}
+        </button>
+
         {queueEntry ? (
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            <button onClick={onQueueDone} style={{
+            <button onClick={() => { onSaveDraft?.(); onQueueDone(); }} style={{
               width:"100%", padding:"18px",
               background:`linear-gradient(135deg, #A78BFA, #8B5CF6)`,
               color:"#060A12", border:"none", borderRadius:12,
@@ -2181,7 +2403,7 @@ function RecapScreen({ myRoster, drafted, mySlot, onReset, queueEntry, onQueueDo
             }}>DISCARD + RETURN TO QUEUE</button>
           </div>
         ) : (
-          <button onClick={onReset} style={{
+          <button onClick={() => { onSaveDraft?.(); onReset(); }} style={{
             width: "100%", padding: "16px",
             background: T.gold, color: T.bg,
             border: "none", borderRadius: 10,
@@ -2219,7 +2441,7 @@ function OpponentIntel({ mySlot, myRoster, drafted, currentPick }) {
           fontFamily: "'Share Tech Mono',monospace", fontSize: 9,
           color: T.purple, letterSpacing: 0.8, lineHeight: 1.6,
         }}>
-          Log opponent picks (tap OPP on any player) to unlock intel.
+          Log opponent picks (tap THEIR PICK on any player) to unlock intel.
           Pick counter must stay in sync with Underdog for slot attribution to work.
           Use SKIP→ if you miss a pick.
         </div>
@@ -4490,3 +4712,136 @@ function WelcomeScreen({ onStart }) {
     </div>
   );
 }
+
+// ── PORTFOLIO ANALYTICS ─────────────────────────────────────────────────────
+function PortfolioScreen({ savedDrafts, onBack }) {
+  const total = savedDrafts.length;
+  if (total === 0) return (
+    <div style={{ minHeight:"100svh", background:T.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16 }}>
+      <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:11, color:T.dim }}>NO DRAFTS SAVED YET</div>
+      <button onClick={onBack} style={{ padding:"10px 20px", background:T.card, color:T.mute, border:`1px solid ${T.border}`, borderRadius:8, fontFamily:"'Barlow Condensed',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>BACK</button>
+    </div>
+  );
+
+  // Aggregate player exposure
+  const exposureMap = {};
+  savedDrafts.forEach(draft => {
+    (draft.roster || []).forEach(p => {
+      if (!exposureMap[p.name]) exposureMap[p.name] = { name:p.name, pos:p.pos, team:p.team, count:0 };
+      exposureMap[p.name].count++;
+    });
+  });
+  const topExposed = Object.values(exposureMap)
+    .map(e => ({ ...e, pct: (e.count/total)*100 }))
+    .sort((a,b) => b.count - a.count)
+    .slice(0, 20);
+
+  // Position distribution averages
+  const posAvg = { QB:0, RB:0, WR:0, TE:0 };
+  const posTarget = { QB:2, RB:5, WR:7, TE:2 };
+  savedDrafts.forEach(draft => {
+    ['QB','RB','WR','TE'].forEach(pos => {
+      posAvg[pos] += (draft.roster||[]).filter(p=>p.pos===pos).length;
+    });
+  });
+  ['QB','RB','WR','TE'].forEach(pos => posAvg[pos] = (posAvg[pos]/total).toFixed(1));
+
+  // QB stack coverage
+  const qbStackCount = savedDrafts.filter(draft => {
+    const qbs = (draft.roster||[]).filter(p=>p.pos==='QB');
+    const teams = qbs.map(q=>q.team);
+    return (draft.roster||[]).some(p => p.pos!=='QB' && teams.includes(p.team));
+  }).length;
+
+  // Slot distribution
+  const slotCounts = {};
+  savedDrafts.forEach(d => { slotCounts[d.slot] = (slotCounts[d.slot]||0)+1; });
+
+  return (
+    <div style={{ minHeight:"100svh", background:T.bg, fontFamily:"'Barlow',sans-serif", color:T.text, paddingBottom:48 }}>
+      {/* Header */}
+      <div style={{ background:T.panel, borderBottom:`1px solid ${T.border}`, padding:"16px 16px 12px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <button onClick={onBack} style={{ background:"none", border:"none", color:T.mute, fontSize:20, cursor:"pointer", padding:"0 4px" }}>←</button>
+          <div>
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2 }}>PORTFOLIO ANALYTICS</div>
+            <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:22, fontWeight:900 }}>{total} DRAFT{total!==1?'S':''} ANALYZED</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding:"16px 16px 0" }}>
+        {/* Position averages */}
+        <div style={{ background:T.panel, borderRadius:12, border:`1px solid ${T.border}`, padding:16, marginBottom:14 }}>
+          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:12 }}>AVG POSITION FILL</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+            {['QB','RB','WR','TE'].map(pos => {
+              const avg = parseFloat(posAvg[pos]);
+              const tgt = posTarget[pos];
+              const pct = Math.min(100, (avg/tgt)*100);
+              const col = POS_C[pos]?.fg;
+              const ok = avg >= tgt;
+              return (
+                <div key={pos} style={{ background:T.card, borderRadius:8, padding:10, textAlign:"center", border:`1px solid ${ok?col+"33":T.border}` }}>
+                  <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:11, fontWeight:700, color:col, marginBottom:4 }}>{pos}</div>
+                  <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:24, fontWeight:900, color:ok?col:T.amber, lineHeight:1 }}>{posAvg[pos]}</div>
+                  <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:T.dim, marginTop:2 }}>avg / {tgt} need</div>
+                  <div style={{ height:3, background:T.bg, borderRadius:2, overflow:"hidden", marginTop:6 }}>
+                    <div style={{ width:`${pct}%`, height:"100%", background:ok?col:T.amber }}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* QB stack coverage + slot spread */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+          <div style={{ background:T.panel, borderRadius:12, border:`1px solid ${T.border}`, padding:14 }}>
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:1.5, marginBottom:8 }}>QB STACKS</div>
+            <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:28, fontWeight:900, color:T.purple, lineHeight:1 }}>{qbStackCount}</div>
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, marginTop:4 }}>of {total} have QB stack</div>
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:qbStackCount/total>=0.5?T.green:T.amber, marginTop:2 }}>
+              {((qbStackCount/total)*100).toFixed(0)}% coverage
+            </div>
+          </div>
+          <div style={{ background:T.panel, borderRadius:12, border:`1px solid ${T.border}`, padding:14 }}>
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:1.5, marginBottom:8 }}>SLOTS USED</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:3 }}>
+              {Object.entries(slotCounts).sort(([a],[b])=>+a-+b).map(([slot, cnt]) => (
+                <div key={slot} style={{ padding:"3px 7px", background:`${T.gold}18`, border:`1px solid ${T.gold}33`, borderRadius:4, fontFamily:"'Barlow Condensed',sans-serif", fontSize:13, fontWeight:700, color:T.gold }}>
+                  {slot}<span style={{ fontSize:9, color:T.dim, fontFamily:"'Share Tech Mono',monospace" }}>×{cnt}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Top exposed players */}
+        <div style={{ background:T.panel, borderRadius:12, border:`1px solid ${T.border}`, padding:16, marginBottom:14 }}>
+          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:12 }}>PLAYER EXPOSURE</div>
+          {topExposed.map((e, i) => {
+            const col = e.pct >= 60 ? T.red : e.pct >= 35 ? T.amber : T.green;
+            return (
+              <div key={e.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 0", borderBottom:i<topExposed.length-1?`1px solid ${T.border}`:"none" }}>
+                <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, minWidth:18 }}>{i+1}</span>
+                <PosBadge pos={e.pos}/>
+                <span style={{ flex:1, fontSize:13, fontWeight:600, color:T.text }}>{e.name}</span>
+                <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.mute }}>{e.team}</span>
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <div style={{ width:60, height:4, background:T.card, borderRadius:2, overflow:"hidden" }}>
+                    <div style={{ width:`${Math.min(100,e.pct)}%`, height:"100%", background:col }}/>
+                  </div>
+                  <span style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:14, fontWeight:900, color:col, minWidth:38, textAlign:"right" }}>{e.pct.toFixed(0)}%</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Mount
+createRoot(document.getElementById('root')).render(React.createElement(App));
