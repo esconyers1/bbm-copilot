@@ -713,7 +713,10 @@ function rosterCounts(roster) {
 // Screen 1: Setup  |  Screen 2: Draft  |  Screen 3: Recap
 
 export default function App() {
-  const [screen, setScreen] = useState("setup");
+  // Show welcome screen to first-time visitors; skip on return visits
+  const [screen, setScreen] = useState(() =>
+    localStorage.getItem('copilot_v2_seen') ? 'setup' : 'welcome'
+  );
   const [platform, setPlatform] = useState('underdog'); // 'underdog' | 'dk'
   const [mySlot, setMySlot] = useState(6);
   const [drafted, setDrafted] = useState([]);
@@ -1075,9 +1078,9 @@ function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBill
           fontSize: 13, color: T.mute, lineHeight: 1.6, margin: "10px 0 6px",
           maxWidth: 340,
         }}>
-          Real-time pick intelligence for Best Ball Mania.
-          Run alongside your live draft for tier alerts, stack detection,
-          opponent tracking, and AI-powered pick advice.
+          Pick your platform and slot below, then open your Underdog draft
+          in another tab. Copilot tracks the board in real time —
+          tier breaks, stack windows, and ranked pick recommendations every turn.
         </p>
         <div style={{
           fontFamily: "'Share Tech Mono', monospace",
@@ -4601,109 +4604,163 @@ function BillyCatcherScreen({ queue, setQueue, billyCount, setBillyCount, myCoun
 // WELCOME SCREEN — landing page for new users
 // ═══════════════════════════════════════════════════════════════════════════
 function WelcomeScreen({ onStart }) {
+  const handleStart = () => {
+    localStorage.setItem('copilot_v2_seen', '1');
+    onStart();
+  };
+
+  const FEATURES = [
+    {
+      icon: "📈",
+      title: "Live Best Ball ADP",
+      desc: "Underdog & DraftKings ADP pulled from FantasyPros in real time. Always current, position-by-position.",
+      color: "#5B8CFF",
+    },
+    {
+      icon: "🔥",
+      title: "Tier Alerts",
+      desc: "Get flagged the moment you're at a positional tier break — so you know when to reach and when to wait.",
+      color: "#FFD166",
+    },
+    {
+      icon: "🎯",
+      title: "Pick Recommendations",
+      desc: "Your next 3 picks ranked by value. Factors in your roster, scarcity, stacks, and your uploaded rankings.",
+      color: "#1DD882",
+    },
+    {
+      icon: "📊",
+      title: "Portfolio Exposure",
+      desc: "See exactly which players you've drafted across all your teams, and what % of your portfolio they represent.",
+      color: "#A78BFA",
+    },
+    {
+      icon: "↔️",
+      title: "Stack & Combo Tracking",
+      desc: "See which QB–WR and RB–DEF combos you've built — and which winning stacks you're missing.",
+      color: "#2DD4BF",
+    },
+    {
+      icon: "📂",
+      title: "Custom Rankings",
+      desc: "Drop in your ETR or any CSV rankings file. The board re-orders to your tiers instantly.",
+      color: "#FFB340",
+    },
+  ];
+
   return (
     <div style={{
       minHeight:"100svh",
       background:"linear-gradient(160deg, #0A0E1C 0%, #060A12 60%)",
       fontFamily:"'Barlow', sans-serif",
       color:"#EBEEf8",
-      display:"flex", flexDirection:"column",
-      justifyContent:"space-between",
+      overflowY:"auto",
     }}>
-      <div style={{padding:"48px 28px 0"}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:36}}>
+      {/* ── HERO ── */}
+      <div style={{padding:"44px 24px 32px"}}>
+        {/* Logo row */}
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:32}}>
           <div style={{
-            width:44,height:44,borderRadius:10,
+            width:40,height:40,borderRadius:9,
             background:"#FFD166",
             display:"flex",alignItems:"center",justifyContent:"center",
             fontFamily:"'Barlow Condensed',sans-serif",
-            fontSize:18,fontWeight:900,color:"#060A12",
-            boxShadow:"0 0 24px rgba(255,209,102,0.4)",
+            fontSize:16,fontWeight:900,color:"#060A12",
+            boxShadow:"0 0 20px rgba(255,209,102,0.35)",
           }}>CP</div>
           <div>
-            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:14,fontWeight:700,color:"#FFD166",letterSpacing:2}}>COPILOT</div>
-            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#475068",letterSpacing:1.5}}>BEST BALL INTELLIGENCE</div>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:12,fontWeight:700,color:"#FFD166",letterSpacing:2}}>COPILOT</div>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#475068",letterSpacing:1.5}}>BEST BALL INTELLIGENCE</div>
           </div>
           <div style={{
             marginLeft:"auto",
-            fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#1DD882",
+            fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#1DD882",
             background:"rgba(29,216,130,0.12)",border:"1px solid rgba(29,216,130,0.3)",
             padding:"3px 8px",borderRadius:10,letterSpacing:1,
           }}>FREE</div>
         </div>
 
+        {/* Main headline */}
         <h1 style={{
           fontFamily:"'Barlow Condensed',sans-serif",
-          fontSize:54,fontWeight:900,lineHeight:0.93,
-          letterSpacing:-1,margin:"0 0 20px",
+          fontSize:52,fontWeight:900,lineHeight:0.92,
+          letterSpacing:-1,margin:"0 0 16px",
         }}>
-          THE DRAFT<br/>
-          TOOL YOUR<br/>
-          <span style={{color:"#FFD166"}}>SLOT NEEDS</span>
+          BUILT TO<br/>
+          <span style={{color:"#FFD166"}}>WIN BBM.</span>
         </h1>
 
-        <p style={{fontSize:16,lineHeight:1.65,color:"#8892AA",margin:"0 0 36px",maxWidth:340}}>
-          Run this alongside your Underdog Best Ball draft.
-          It tracks the board, tells you when your pick is coming,
-          and tells you exactly what to take.
+        <p style={{fontSize:15,lineHeight:1.65,color:"#8892AA",margin:"0 0 24px",maxWidth:340}}>
+          Run this alongside your live draft on Underdog or DraftKings.
+          Copilot tracks the board, flags value windows, and tells you
+          exactly what to take — pick by pick.
         </p>
 
-        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:36}}>
-          {[["🎯","Smart recommendations"],["🔥","Tier break alerts"],["↔","Stack detection"],["🤖","Autopilot for fast drafts"],["⚡","Works on any phone"],["🆓","No login, no cost"]].map(([icon,label])=>(
-            <div key={label} style={{
-              display:"flex",alignItems:"center",gap:6,
-              padding:"7px 12px",
-              background:"rgba(255,255,255,0.04)",
-              border:"1px solid rgba(255,255,255,0.08)",
-              borderRadius:20,fontSize:12,color:"#8892AA",
-            }}><span>{icon}</span>{label}</div>
-          ))}
-        </div>
-
+        {/* How it works in 3 steps */}
         <div style={{
-          background:"rgba(255,209,102,0.07)",
-          border:"1px solid rgba(255,209,102,0.2)",
-          borderRadius:10,padding:"14px 16px",marginBottom:36,
+          background:"rgba(255,209,102,0.06)",
+          border:"1px solid rgba(255,209,102,0.18)",
+          borderRadius:12,padding:"16px",marginBottom:28,
         }}>
-          <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:9,color:"#FFD166",letterSpacing:1.5,marginBottom:6}}>VS. THE COMPETITION</div>
-          <div style={{fontSize:13,color:"#EBEEf8",lineHeight:1.7}}>
-            The Sidekick costs <strong style={{color:"#FF4E6A"}}>$499/year</strong>.
-            The Solver is a monthly subscription.
-            This does more than either — and it's <strong style={{color:"#1DD882"}}>completely free</strong>.
-          </div>
-        </div>
-      </div>
-
-      <div style={{padding:"0 28px 48px"}}>
-        <div style={{marginBottom:24}}>
-          {[["1","Pick your draft slot and draft mode"],["2","Open Underdog in another tab on your phone"],["3","When it's your turn — check here for the pick"]].map(([n,text])=>(
-            <div key={n} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:10}}>
+          <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#FFD166",letterSpacing:2,marginBottom:12}}>HOW IT WORKS</div>
+          {[
+            ["1","Open Copilot + your Underdog draft side by side"],
+            ["2","Enter your draft slot, then tap ENTER DRAFT ROOM"],
+            ["3","Log each pick as it happens — Copilot handles the rest"],
+          ].map(([n,text])=>(
+            <div key={n} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:9}}>
               <div style={{
-                width:24,height:24,borderRadius:"50%",
+                width:22,height:22,borderRadius:"50%",flexShrink:0,
                 background:"rgba(255,209,102,0.15)",
                 border:"1px solid rgba(255,209,102,0.3)",
                 display:"flex",alignItems:"center",justifyContent:"center",
                 fontFamily:"'Barlow Condensed',sans-serif",
-                fontSize:13,fontWeight:900,color:"#FFD166",flexShrink:0,
+                fontSize:12,fontWeight:900,color:"#FFD166",
               }}>{n}</div>
-              <div style={{fontSize:14,color:"#8892AA",lineHeight:1.5,paddingTop:2}}>{text}</div>
+              <div style={{fontSize:13,color:"#8892AA",lineHeight:1.5,paddingTop:2}}>{text}</div>
             </div>
           ))}
         </div>
+      </div>
 
-        <button onClick={onStart} style={{
-          width:"100%",padding:"18px",
+      {/* ── FEATURES GRID ── */}
+      <div style={{padding:"0 24px 28px"}}>
+        <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#475068",letterSpacing:2,marginBottom:14}}>WHAT'S INSIDE</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {FEATURES.map(f => (
+            <div key={f.title} style={{
+              background:"rgba(255,255,255,0.03)",
+              border:`1px solid rgba(255,255,255,0.07)`,
+              borderRadius:10,padding:"13px 12px",
+            }}>
+              <div style={{fontSize:22,marginBottom:6}}>{f.icon}</div>
+              <div style={{
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:14,fontWeight:900,color:f.color,
+                letterSpacing:0.3,marginBottom:4,
+              }}>{f.title}</div>
+              <div style={{fontSize:11,color:"#475068",lineHeight:1.5}}>{f.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── CTA ── */}
+      <div style={{padding:"0 24px 48px"}}>
+        <button onClick={handleStart} style={{
+          width:"100%",padding:"20px",
           background:"linear-gradient(135deg, #FFD166, #FFB830)",
-          color:"#060A12",border:"none",borderRadius:12,
+          color:"#060A12",border:"none",borderRadius:13,
           fontFamily:"'Barlow Condensed',sans-serif",
-          fontSize:24,fontWeight:900,letterSpacing:1,cursor:"pointer",
-          boxShadow:"0 4px 28px rgba(255,209,102,0.4)",
-        }}>SET UP MY DRAFT →</button>
+          fontSize:26,fontWeight:900,letterSpacing:1,cursor:"pointer",
+          boxShadow:"0 6px 32px rgba(255,209,102,0.45)",
+          marginBottom:14,
+        }}>LET'S DRAFT →</button>
 
         <div style={{
-          marginTop:14,textAlign:"center",
+          textAlign:"center",
           fontFamily:"'Share Tech Mono',monospace",
-          fontSize:9,color:"#475068",letterSpacing:1,lineHeight:1.8,
+          fontSize:8,color:"#475068",letterSpacing:1,lineHeight:2,
         }}>
           NO ACCOUNT · NO SUBSCRIPTION · NO INSTALL<br/>
           WORKS ON IPHONE, ANDROID &amp; DESKTOP
