@@ -714,8 +714,9 @@ function rosterCounts(roster) {
 
 export default function App() {
   // Show welcome screen to first-time visitors; skip on return visits
+  // Bump key version to force existing users to see the redesigned screen
   const [screen, setScreen] = useState(() =>
-    localStorage.getItem('copilot_v2_seen') ? 'setup' : 'welcome'
+    localStorage.getItem('copilot_v3_seen') ? 'setup' : 'welcome'
   );
   const [platform, setPlatform] = useState('underdog'); // 'underdog' | 'dk'
   const [mySlot, setMySlot] = useState(6);
@@ -4605,7 +4606,7 @@ function BillyCatcherScreen({ queue, setQueue, billyCount, setBillyCount, myCoun
 // ═══════════════════════════════════════════════════════════════════════════
 function WelcomeScreen({ onStart }) {
   const handleStart = () => {
-    localStorage.setItem('copilot_v2_seen', '1');
+    localStorage.setItem('copilot_v3_seen', '1');
     onStart();
   };
 
