@@ -6,25 +6,19 @@
   <meta name="theme-color" content="#060A12">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>COPILOT — Best Ball Draft Intelligence</title>
+  <title>PickSetter — Set Your Edge.</title>
+  <meta name="description" content="The AI-powered best ball command center. Real-time pick recommendations, portfolio exposure tracking, and stack analysis for Underdog and DraftKings. No extension required.">
+  <meta property="og:title" content="PickSetter — Set Your Edge.">
+  <meta property="og:description" content="AI draft advisor + portfolio manager for serious best ball players. Works on your phone. No extension needed.">
+  <meta property="og:url" content="https://picksetter.com">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; background: #060A12; }
+    html, body { height: 100%; background: #060A12; overflow-x: hidden; }
     #root { height: 100%; }
-    #err { display:none; position:fixed; top:20px; left:20px; right:20px;
-      background:#FF4E6A; color:#fff; padding:16px; border-radius:8px;
-      font-family:monospace; font-size:12px; z-index:9999; }
   </style>
 </head>
 <body>
   <div id="root"></div>
-  <div id="err"></div>
-  <script>
-    window.onerror = function(msg,src,line,col,err){
-      document.getElementById('err').style.display='block';
-      document.getElementById('err').textContent='ERROR: '+msg+' (line '+line+')';
-    };
-  </script>
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
