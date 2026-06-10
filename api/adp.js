@@ -119,8 +119,8 @@ function buildPlayer(playerField, posRaw, cells, cols, sport) {
   if (sport.embedded) {
     // NBA/MLB format: "Nikola Jokic (DEN - C)" or "Luka Doncic (LAL - PG,SG) DTD"
     // The player cell position varies, so locate it by pattern.
-    const field = cells.find(c => /\([A-Z]{2,3}\s*-\s*[A-Z0-9,\/\- ]+\)/.test(c)) || playerField;
-    const m = field.match(/^(.*?)\s*\(([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
+    const field = cells.find(c => /\(\s*[A-Z]{2,3}\s*-\s*[A-Z0-9,\/\- ]+\)/.test(c)) || playerField;
+    const m = field.match(/^(.*?)\s*\(\s*([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
     if (!m) return null;
     name = m[1].trim();
     team = m[2];
@@ -145,7 +145,7 @@ function parseHTML(html, format, sport) {
   // Pages can contain several tables (data table, source-picker modal, ads).
   // Parse every table and keep whichever yields the most players.
   const tables = html.match(/<table[\s\S]*?<\/table>/gi) || [];
-  if (!tables.length) throw new Error('No ADP table found in FantasyPros HTML');
+  if (!tables.length && !sport.embedded) throw new Error('No ADP table found in FantasyPros HTML');
 
   let best = [];
   for (const table of tables) {
@@ -172,9 +172,9 @@ function parseHTML(html, format, sport) {
       const rowHtml = chunk.split(/<\/tr>|<\/tbody>|<\/table>/i)[0];
       const cells = rowHtml.split(/<td[^>]*>/i).slice(1).map(c => stripTags(c.split(/<\/td>/i)[0]));
       if (cells.length < 3) continue;
-      const field = cells.find(c => /\([A-Z]{2,3}\s*-\s*[A-Z0-9,\/\- ]+\)/.test(c));
+      const field = cells.find(c => /\(\s*[A-Z]{2,3}\s*-\s*[A-Z0-9,\/\- ]+\)/.test(c));
       if (!field) continue;
-      const m = field.match(/^(.*?)\s*\(([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
+      const m = field.match(/^(.*?)\s*\(\s*([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
       if (!m) continue;
       const pos = normalizePos(m[3], sport);
       if (!sport.positions.has(pos)) continue;
