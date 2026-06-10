@@ -20,10 +20,12 @@ const SPORTS = {
   nba: {
     url: 'https://www.fantasypros.com/nba/adp/overall.php',
     positions: new Set(['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F', 'UTIL']),
+    embedded: true, // player cell format: "Name (TEAM - POS,POS)"
   },
   mlb: {
     url: 'https://www.fantasypros.com/mlb/adp/overall.php',
     positions: new Set(['C', '1B', '2B', '3B', 'SS', 'OF', 'SP', 'RP', 'DH', 'UTIL']),
+    embedded: true,
   },
 };
 
@@ -113,9 +115,21 @@ function pickAdpColumn(headers, format) {
 }
 
 function buildPlayer(playerField, posRaw, cells, cols, sport) {
-  const pos = normalizePos(posRaw, sport);
+  let name, team, pos;
+  if (sport.embedded) {
+    // NBA/MLB format: "Nikola Jokic (DEN - C)" or "Luka Doncic (LAL - PG,SG) DTD"
+    const m = playerField.match(/^(.*?)\s*\(([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
+    if (!m) return null;
+    name = m[1].trim();
+    team = m[2];
+    pos = normalizePos(m[3], sport);
+  } else {
+    pos = normalizePos(posRaw, sport);
+    const split = splitPlayerField(playerField);
+    name = split.name;
+    team = split.team;
+  }
   if (!sport.positions.has(pos)) return null;
-  const { name, team } = splitPlayerField(playerField);
   if (!name || name.length < 2) return null;
   let adp = parseFloat(cells[cols.primary]);
   if (isNaN(adp) && cols.secondary >= 0) adp = parseFloat(cells[cols.secondary]);
