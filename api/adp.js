@@ -27,6 +27,11 @@ const SPORTS = {
     positions: new Set(['C', '1B', '2B', '3B', 'SS', 'OF', 'SP', 'RP', 'DH', 'UTIL']),
     embedded: true,
   },
+  nhl: {
+    url: 'https://www.fantasypros.com/nhl/adp/overall.php',
+    positions: new Set(['C', 'LW', 'RW', 'W', 'D', 'G', 'F', 'UTIL']),
+    embedded: true,
+  },
 };
 
 export default async function handler(req, res) {
