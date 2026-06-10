@@ -162,6 +162,33 @@ function parseHTML(html, format, sport) {
     }
     if (players.length > best.length) best = players;
   }
+
+  // Fallback: FantasyPros NBA/MLB markup omits </tr> closers, which breaks
+  // table-scoped regex parsing. Split-scan the whole document; ADP = last
+  // numeric cell in each row (the AVG column).
+  if (best.length < 50 && sport.embedded) {
+    const players = [];
+    for (const chunk of html.split(/<tr[^>]*>/i).slice(1)) {
+      const rowHtml = chunk.split(/<\/tr>|<\/tbody>|<\/table>/i)[0];
+      const cells = rowHtml.split(/<td[^>]*>/i).slice(1).map(c => stripTags(c.split(/<\/td>/i)[0]));
+      if (cells.length < 3) continue;
+      const field = cells.find(c => /\([A-Z]{2,3}\s*-\s*[A-Z0-9,\/\- ]+\)/.test(c));
+      if (!field) continue;
+      const m = field.match(/^(.*?)\s*\(([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
+      if (!m) continue;
+      const pos = normalizePos(m[3], sport);
+      if (!sport.positions.has(pos)) continue;
+      let adp = NaN;
+      for (let k = cells.length - 1; k >= 0; k--) {
+        const v = parseFloat(cells[k]);
+        if (!isNaN(v)) { adp = v; break; }
+      }
+      if (isNaN(adp) || !m[1].trim()) continue;
+      players.push({ name: m[1].trim(), pos, team: m[2], adp });
+    }
+    if (players.length > best.length) best = players;
+  }
+
   return best.sort((a, b) => a.adp - b.adp);
 }
 
