@@ -12,18 +12,33 @@
 //
 // Edge-cached 1 hour; stale-while-revalidate 24h.
 
-const POSITIONS = new Set(['QB', 'RB', 'WR', 'TE']);
+const SPORTS = {
+  nfl: {
+    url: 'https://www.fantasypros.com/nfl/adp/best-ball-overall.php',
+    positions: new Set(['QB', 'RB', 'WR', 'TE']),
+  },
+  nba: {
+    url: 'https://www.fantasypros.com/nba/adp/overall.php',
+    positions: new Set(['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F', 'UTIL']),
+  },
+  mlb: {
+    url: 'https://www.fantasypros.com/mlb/adp/overall.php',
+    positions: new Set(['C', '1B', '2B', '3B', 'SS', 'OF', 'SP', 'RP', 'DH', 'UTIL']),
+  },
+};
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   try {
     const format = (req.query && req.query.format) || 'half-ppr';
-    const body = await fetchFantasyPros();
+    const sportKey = String((req.query && req.query.sport) || 'nfl').toLowerCase();
+    const sport = SPORTS[sportKey] || SPORTS.nfl;
+    const body = await fetchFantasyPros(sport.url);
 
     // Detect payload type: real CSV has no tags and is comma-delimited
     const looksLikeHTML = /<\s*(html|table|tr|td)/i.test(body);
-    const players = looksLikeHTML ? parseHTML(body, format) : parseCSV(body, format);
+    const players = looksLikeHTML ? parseHTML(body, format, sport) : parseCSV(body, format, sport);
 
     if (players.length < 50) {
       throw new Error(`Too few players parsed (${players.length}) — FantasyPros may have changed format`);
@@ -32,7 +47,8 @@ export default async function handler(req, res) {
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     return res.json({
       players,
-      source: 'fantasypros.com/best-ball',
+      source: 'fantasypros.com',
+      sport: sportKey in SPORTS ? sportKey : 'nfl',
       format,
       year: new Date().getFullYear(),
       count: players.length,
@@ -43,8 +59,7 @@ export default async function handler(req, res) {
   }
 }
 
-async function fetchFantasyPros() {
-  const url = 'https://www.fantasypros.com/nfl/adp/best-ball-overall.php';
+async function fetchFantasyPros(url) {
   const r = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
@@ -56,7 +71,7 @@ async function fetchFantasyPros() {
   return r.text();
 }
 
-// ── Shared helpers ────────────────────
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 function stripTags(s) {
   return s
@@ -68,9 +83,11 @@ function stripTags(s) {
     .trim();
 }
 
-// "WR1" → "WR"; "RB12" → "RB"
-function normalizePos(raw) {
-  return (raw || '').toUpperCase().trim().replace(/[0-9]+$/, '');
+// "WR1" → "WR"; "RB12" → "RB"; "SS,2B" → "SS"; "PG-SG" → "PG"
+function normalizePos(raw, sport) {
+  const first = (raw || '').toUpperCase().trim().split(/[,/-]/)[0].trim();
+  if (sport && sport.positions.has(first)) return first; // exact match incl. 1B/2B/3B
+  return first.replace(/[0-9]+$/, '');
 }
 
 // "Ja'Marr Chase CIN (6)" → { name: "Ja'Marr Chase", team: "CIN" }
@@ -95,9 +112,9 @@ function pickAdpColumn(headers, format) {
   return { primary: headers.length - 1, secondary: -1 };
 }
 
-function buildPlayer(playerField, posRaw, cells, cols) {
-  const pos = normalizePos(posRaw);
-  if (!POSITIONS.has(pos)) return null;
+function buildPlayer(playerField, posRaw, cells, cols, sport) {
+  const pos = normalizePos(posRaw, sport);
+  if (!sport.positions.has(pos)) return null;
   const { name, team } = splitPlayerField(playerField);
   if (!name || name.length < 2) return null;
   let adp = parseFloat(cells[cols.primary]);
@@ -106,9 +123,9 @@ function buildPlayer(playerField, posRaw, cells, cols) {
   return { name, pos, team, adp };
 }
 
-// ── HTML parser (current FantasyPros format) ────────────────────
+// ── HTML parser (current FantasyPros format) ─────────────────────────────────
 
-function parseHTML(html, format) {
+function parseHTML(html, format, sport) {
   const tableMatch =
     html.match(/<table[^>]*id=["']data["'][\s\S]*?<\/table>/i) ||
     html.match(/<table[\s\S]*?<\/table>/i);
@@ -123,13 +140,13 @@ function parseHTML(html, format) {
   for (const row of table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
     const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => stripTags(m[1]));
     if (cells.length < 4) continue;
-    const p = buildPlayer(cells[1] || '', cells[2] || '', cells, cols);
+    const p = buildPlayer(cells[1] || '', cells[2] || '', cells, cols, sport);
     if (p) players.push(p);
   }
   return players.sort((a, b) => a.adp - b.adp);
 }
 
-// ── CSV parser (legacy fallback) ────────────────────
+// ── CSV parser (legacy fallback) ──────────────────────────────────────────────
 
 function parseCSVLine(line) {
   const result = [];
@@ -143,7 +160,7 @@ function parseCSVLine(line) {
   return result;
 }
 
-function parseCSV(csv, format) {
+function parseCSV(csv, format, sport) {
   const lines = csv.trim().split('\n').filter(Boolean);
   if (lines.length < 2) throw new Error('CSV empty or malformed');
 
@@ -154,7 +171,7 @@ function parseCSV(csv, format) {
   for (let i = 1; i < lines.length; i++) {
     const cells = parseCSVLine(lines[i]);
     if (cells.length < 3) continue;
-    const p = buildPlayer(cells[1] || '', cells[2] || '', cells, cols);
+    const p = buildPlayer(cells[1] || '', cells[2] || '', cells, cols, sport);
     if (p) players.push(p);
   }
   return players.sort((a, b) => a.adp - b.adp);
