@@ -44,15 +44,15 @@ function verifyStripeSignature(payload, signature, secret) {
 }
 
 async function sendCodeEmail(email, code, tier) {
-  const tierLabel = tier === 'elite' ? 'BBM Copilot Elite' : 'BBM Copilot Pro';
+  const tierLabel = tier === 'elite' ? 'PickSetter Elite' : 'PickSetter Pro';
   const features = tier === 'elite'
     ? 'Unlimited AI picks · Full portfolio analytics · Custom rankings · Roster export · Opponent modeling · Early ADP · Post-draft optimizer'
     : 'Unlimited AI picks · Full portfolio analytics · Custom rankings · Roster export';
 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #060A12; color: #EBEEf8; padding: 32px; border-radius: 12px;">
-      <div style="font-size: 28px; font-weight: 900; letter-spacing: 2px; color: #FFD166; margin-bottom: 4px;">COPILOT</div>
-      <div style="font-size: 13px; color: #8892AA; letter-spacing: 1px; margin-bottom: 32px;">Best Ball Intelligence</div>
+      <div style="font-size: 28px; font-weight: 900; letter-spacing: 2px; color: #FFD166; margin-bottom: 4px;">PICKSETTER</div>
+      <div style="font-size: 13px; color: #8892AA; letter-spacing: 1px; margin-bottom: 32px;">Set Your Edge.</div>
 
       <div style="font-size: 18px; font-weight: 700; margin-bottom: 8px;">You're in. 🎯</div>
       <p style="color: #8892AA; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
@@ -66,7 +66,7 @@ async function sendCodeEmail(email, code, tier) {
 
       <div style="font-size: 13px; color: #8892AA; margin-bottom: 8px; font-weight: 700;">How to activate:</div>
       <ol style="color: #8892AA; font-size: 13px; line-height: 2; padding-left: 20px; margin-bottom: 24px;">
-        <li>Open BBM Copilot</li>
+        <li>Open <a href="https://picksetter.com" style="color: #FFD166;">picksetter.com</a></li>
         <li>Tap the gear icon (⚙) in the top right</li>
         <li>Tap "Enter Pro Code"</li>
         <li>Enter your code above and tap UNLOCK</li>
@@ -91,9 +91,9 @@ async function sendCodeEmail(email, code, tier) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: 'BBM Copilot <noreply@bbmcopilot.com>',
+      from: 'PickSetter <noreply@picksetter.com>',
       to: [email],
-      subject: `Your BBM Copilot ${tierLabel} access code`,
+      subject: `Your ${tierLabel} access code`,
       html,
     }),
   });
