@@ -118,7 +118,9 @@ function buildPlayer(playerField, posRaw, cells, cols, sport) {
   let name, team, pos;
   if (sport.embedded) {
     // NBA/MLB format: "Nikola Jokic (DEN - C)" or "Luka Doncic (LAL - PG,SG) DTD"
-    const m = playerField.match(/^(.*?)\s*\(([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
+    // The player cell position varies, so locate it by pattern.
+    const field = cells.find(c => /\([A-Z]{2,3}\s*-\s*[A-Z0-9,\/\- ]+\)/.test(c)) || playerField;
+    const m = field.match(/^(.*?)\s*\(([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
     if (!m) return null;
     name = m[1].trim();
     team = m[2];
@@ -140,24 +142,27 @@ function buildPlayer(playerField, posRaw, cells, cols, sport) {
 // ── HTML parser (current FantasyPros format) ─────────────────────────────────
 
 function parseHTML(html, format, sport) {
-  const tableMatch =
-    html.match(/<table[^>]*id=["']data["'][\s\S]*?<\/table>/i) ||
-    html.match(/<table[\s\S]*?<\/table>/i);
-  if (!tableMatch) throw new Error('No ADP table found in FantasyPros HTML');
-  const table = tableMatch[0];
+  // Pages can contain several tables (data table, source-picker modal, ads).
+  // Parse every table and keep whichever yields the most players.
+  const tables = html.match(/<table[\s\S]*?<\/table>/gi) || [];
+  if (!tables.length) throw new Error('No ADP table found in FantasyPros HTML');
 
-  const headers = [...table.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map(m => stripTags(m[1]));
-  if (!headers.length) throw new Error('No table headers found');
-  const cols = pickAdpColumn(headers, format);
+  let best = [];
+  for (const table of tables) {
+    const headers = [...table.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map(m => stripTags(m[1]));
+    if (!headers.length) continue;
+    const cols = pickAdpColumn(headers, format);
 
-  const players = [];
-  for (const row of table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
-    const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => stripTags(m[1]));
-    if (cells.length < 4) continue;
-    const p = buildPlayer(cells[1] || '', cells[2] || '', cells, cols, sport);
-    if (p) players.push(p);
+    const players = [];
+    for (const row of table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+      const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => stripTags(m[1]));
+      if (cells.length < 3) continue;
+      const p = buildPlayer(cells[1] || '', cells[2] || '', cells, cols, sport);
+      if (p) players.push(p);
+    }
+    if (players.length > best.length) best = players;
   }
-  return players.sort((a, b) => a.adp - b.adp);
+  return best.sort((a, b) => a.adp - b.adp);
 }
 
 // ── CSV parser (legacy fallback) ──────────────────────────────────────────────
