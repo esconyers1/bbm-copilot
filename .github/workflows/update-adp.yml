@@ -2,39 +2,63 @@ name: Update ADP Data
 
 on:
   schedule:
+    # Every Monday at 9:30 AM ET (13:30 UTC)
     - cron: '30 13 * * 1'
   workflow_dispatch:
+    # Manual trigger — run anytime from GitHub Actions tab
 
 jobs:
   update-adp:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # needed to commit back to repo
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
+          cache: 'npm'
+
       - name: Install dependencies
-        run: |
-          npm init -y
-          npm install react react-dom esbuild
-      - name: Create output dir
-        run: mkdir -p public
-      - name: Fetch ADP and rebuild
+        run: npm install
+
+      - name: Fetch latest ADP + rebuild bundle
         run: node scripts/update-adp.js
-      - name: Copy bundle to root
+        # Script exits 0 on fetch failure to avoid blocking CI, but logs the error.
+        # Check Action logs if data looks stale — FantasyPros may be rate-limiting.
+
+      - name: Verify data freshness
         run: |
-          if [ -f public/app.js ]; then
-            cp public/app.js app.js
+          # Fail loudly if players-data.js has no date stamp (script silently kept old data)
+          if ! grep -q "Updated:" src/players-data.js; then
+            echo "WARNING: players-data.js has no date stamp — ADP fetch likely failed."
+            echo "Check logs above. FantasyPros may be blocking this IP range."
+            echo "Fix: run 'node scripts/update-adp.js' locally and commit manually."
+            # Don't fail CI, but surface the warning prominently
+          else
+            grep "Updated:" src/players-data.js
           fi
-      - name: Commit if changed
+
+      - name: Check if anything changed
+        id: changes
+        run: |
+          git diff --quiet public/app.js src/players-data.js || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push updated bundle
+        if: steps.changes.outputs.changed == 'true'
         run: |
           git config user.name "ADP Bot"
           git config user.email "actions@github.com"
-          git add app.js src/players-data.js
-          git diff --staged --quiet || git commit -m "Auto-update ADP data $(date +%Y-%m-%d)"
+          git add public/app.js src/players-data.js
+          git commit -m "Auto-update ADP data $(date +%Y-%m-%d)"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: No changes
+        if: steps.changes.outputs.changed != 'true'
+        run: echo "ADP unchanged — no commit needed"
