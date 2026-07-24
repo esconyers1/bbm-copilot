@@ -61,6 +61,20 @@ const BYE = {
   NYJ:12,PHI:9,PIT:5,SEA:10,SF:14,TB:9,TEN:5,WAS:14,
 };
 
+// Week 17 regular-season matchups — 2026 NFL schedule (released May 2026,
+// confirmed via nfl.com/schedules/2026/by-week/week-17 on 2026-07-24). Used
+// for the playoff-week (Underdog Best Ball final) game-stack correlation
+// engine below. Four games (WAS-JAX, KC-LAC, DEN-NE, LAR-TB) had day/time TBD
+// as flex slots at last check, but the team pairings themselves are locked.
+const WEEK17_OPPONENT = {
+  BAL:'CIN', CIN:'BAL', NO:'ATL', ATL:'NO', SEA:'CAR', CAR:'SEA',
+  IND:'CLE', CLE:'IND', NYG:'DAL', DAL:'NYG', BUF:'MIA', MIA:'BUF',
+  MIN:'NYJ', NYJ:'MIN', PIT:'TEN', TEN:'PIT', LV:'ARI', ARI:'LV',
+  DET:'CHI', CHI:'DET', PHI:'SF', SF:'PHI', HOU:'GB', GB:'HOU',
+  WAS:'JAX', JAX:'WAS', KC:'LAC', LAC:'KC', DEN:'NE', NE:'DEN',
+  LAR:'TB', TB:'LAR',
+};
+
 const RAW = [
   ["Ja'Marr Chase","WR","CIN",1.4],["Bijan Robinson","RB","ATL",2.3],
   ["Justin Jefferson","WR","MIN",3.1],["CeeDee Lamb","WR","DAL",4.2],
@@ -272,6 +286,23 @@ function scorePlayer(player, currentPick, myRoster, tierMap, scarcity, mySlot) {
   if (player.pos === 'TE' && counts.TE === 0 && currentPick > 72)  { score += 10; reasons.push({ t:'need', text:'TE1 needed' }); }
   if (player.pos === 'RB' && counts.RB < 2 && currentPick > 36)    { score += 8;  reasons.push({ t:'need', text:`RB${counts.RB+1}` }); }
 
+  // 3b. Build-archetype awareness — nudge scoring to fit (or correct) the shape
+  // of the roster already in motion, instead of fighting it pick to pick.
+  const archetype = classifyBuildArchetype(myRoster, currentPick);
+  if (archetype.key === 'zero-rb' && player.pos === 'RB') {
+    if (round <= 6) { score -= 6; }
+    else if (counts.RB === 0 && round >= 10) { score += 14; reasons.push({ t:'need', text:'Zero-RB correction' }); }
+  }
+  if (archetype.key === 'hero-rb' && player.pos === 'RB' && counts.RB >= 1 && round <= 8) {
+    score -= 4; // stay the course, keep pivoting to WR
+  }
+  if (archetype.key === 'robust-rb' && player.pos === 'WR' && counts.WR < 3 && round <= 6) {
+    score += 4; // start balancing WR floor sooner
+  }
+  if (archetype.key === 'hyperfragile' && player.pos === 'WR') {
+    score += 10; reasons.push({ t:'need', text:'Fragility correction' });
+  }
+
   // 4. Stack bonus
   const myQBs = myRoster.filter(p => p.pos === 'QB');
   if (myQBs.some(q => q.team === player.team) && (player.pos === 'WR' || player.pos === 'TE')) {
@@ -279,6 +310,18 @@ function scorePlayer(player, currentPick, myRoster, tierMap, scarcity, mySlot) {
   }
   if (player.pos === 'QB' && myRoster.some(p => p.team === player.team && (p.pos==='WR'||p.pos==='TE'))) {
     score += 16; reasons.push({ t:'stack', text:'Reverse stack' });
+  }
+
+  // 4b. WEEK 17 GAME STACK — playoff-week correlation ("bring-back"). If we
+  // already have a QB whose Week 17 opponent is this player's team, pairing
+  // them raises variance for the fantasy championship week: a shootout pays
+  // off both sides. Distinct from the same-team stack above.
+  if (player.pos === 'WR' || player.pos === 'TE' || player.pos === 'RB') {
+    const bringBackQB = myQBs.find(q => WEEK17_OPPONENT[q.team] === player.team);
+    if (bringBackQB) {
+      score += 9;
+      reasons.push({ t:'stack', text:`Wk17 bring-back (${bringBackQB.name.split(' ').pop()})` });
+    }
   }
 
   // 5. TIER BREAK — highest urgency signal
@@ -389,6 +432,94 @@ function getRosterNeeds(roster) {
     .map(([pos, need]) => ({ pos, have: counts[pos], need, gap: need - counts[pos] }))
     .sort((a, b) => b.gap - a.gap)
     .filter(e => e.gap > 0);
+}
+
+// ── BUILD ARCHETYPE + ROSTER HEALTH ──────────────────────────────────────────
+// Classifies the structural shape of a Best Ball roster in real time (Zero-RB,
+// Hero-RB, Robust-RB, Hyperfragile, Balanced) and scores overall structural
+// health 0-100. Pure functions of myRoster/currentPick — no new data source,
+// reuses rosterCounts()/IDEAL already established by scorePlayer.
+const BUILD_IDEAL = { QB: 2, RB: 5, WR: 7, TE: 2 };
+const TOTAL_ROSTER_SIZE = 18;
+
+function classifyBuildArchetype(myRoster, currentPick) {
+  const counts = rosterCounts(myRoster);
+  const picks = myRoster.length;
+  const round = Math.ceil((currentPick || 1) / 12);
+
+  if (picks < 3) {
+    return { key: 'early', label: 'Too Early', desc: 'Not enough picks yet to classify your build.', color: '#8A93A6' };
+  }
+  if (counts.RB >= 4 && counts.WR <= 1 && round <= 6) {
+    return { key: 'hyperfragile', label: 'Hyperfragile RB', desc: 'Very RB-heavy, very early, with almost no WR floor — one injury away from a fragile week.', color: '#FF4E6A' };
+  }
+  if (counts.RB === 0 && round >= 4) {
+    return { key: 'zero-rb', label: 'Zero RB', desc: 'No running backs through Round 4 — leaning on WR depth, planning to stream RB value later.', color: '#4EA1FF' };
+  }
+  if (counts.RB === 1 && round >= 5 && counts.WR >= 3) {
+    return { key: 'hero-rb', label: 'Hero RB', desc: 'One anchor RB, then pivoted to WR — betting your lone back stays healthy and efficient.', color: '#FFD166' };
+  }
+  if (counts.RB >= 3 && round <= 5) {
+    return { key: 'robust-rb', label: 'Robust RB', desc: 'Heavy early RB investment — prioritizing roster floor and touch share over WR upside.', color: '#5BD98A' };
+  }
+  return { key: 'balanced', label: 'Balanced', desc: 'Tracking close to standard positional pace — no strong lean yet.', color: '#B7C3D9' };
+}
+
+function computeRosterHealthScore(myRoster, currentPick) {
+  const counts = rosterCounts(myRoster);
+  const picks = myRoster.length;
+  const archetype = classifyBuildArchetype(myRoster, currentPick);
+  const round = Math.ceil((currentPick || 1) / 12);
+  const flags = [];
+  const strengths = [];
+
+  if (picks === 0) return { score: 100, archetype, flags, strengths, picks };
+
+  let score = 70;
+
+  // 1. Positional pace vs IDEAL, scaled to picks made so far
+  Object.keys(BUILD_IDEAL).forEach(pos => {
+    const expected = (BUILD_IDEAL[pos] / TOTAL_ROSTER_SIZE) * picks;
+    const diff = counts[pos] - expected;
+    if (diff < -1.5) {
+      score -= 6;
+      flags.push(`${pos} behind pace (${counts[pos]} of ~${expected.toFixed(1)} expected by now)`);
+    } else if (diff > 2 && (pos === 'QB' || pos === 'TE')) {
+      score -= 8;
+      flags.push(`${pos} overloaded — ${counts[pos]} rostered, diminishing Best Ball value past ${BUILD_IDEAL[pos]}`);
+    }
+  });
+
+  // 2. Archetype-consistency — don't penalize intentional builds, but flag when
+  // a build has gone on too long without a correction
+  if (archetype.key === 'zero-rb' && counts.RB === 0 && round >= 10) {
+    score -= 15;
+    flags.push('Still zero RBs past Round 10 — bench RB depth is now urgent');
+  }
+  if (archetype.key === 'hyperfragile') {
+    score -= 12;
+    flags.push('RB-heavy build with thin WR corps — one injury away from a fragile week');
+  } else if (archetype.key === 'balanced' || archetype.key === 'robust-rb') {
+    strengths.push('Positional mix tracking close to standard pace');
+  }
+
+  // 3. Stack presence (reuses the same stack logic as scorePlayer)
+  const myQBs = myRoster.filter(p => p.pos === 'QB');
+  const hasStack = myRoster.some(p => (p.pos === 'WR' || p.pos === 'TE') && myQBs.some(q => q.team === p.team));
+  if (hasStack) { score += 6; strengths.push('At least one QB stack rostered'); }
+  else if (picks >= 8) { score -= 4; flags.push('No QB stack yet — missing correlated upside'); }
+
+  // 4. Bye-week clustering — several same-bye players at once is a weekly risk
+  const byeCounts = {};
+  myRoster.forEach(p => { if (p.bye) byeCounts[p.bye] = (byeCounts[p.bye] || 0) + 1; });
+  const worstBye = Object.entries(byeCounts).sort((a, b) => b[1] - a[1])[0];
+  if (worstBye && worstBye[1] >= 4) {
+    score -= 6;
+    flags.push(`${worstBye[1]} players share Bye Week ${worstBye[0]} — check that week's depth`);
+  }
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  return { score, archetype, flags, strengths, picks };
 }
 
 // Find players that appear in both rosters
@@ -625,6 +756,82 @@ function parseRankingsCSV(raw) {
   return result;
 }
 
+// ── DRAFT HISTORY CSV IMPORT ─────────────────────────────────────────────────
+// Parses an exported CSV of a user's full draft history (e.g. an Underdog "My
+// Drafts" export) into the same shape onSaveDraft already produces, so drafts
+// played outside this app count toward portfolio exposure warnings too.
+// Reuses parseCSVLine()/normalizeName() from parseRankingsCSV above.
+// Expected columns (case-insensitive, flexible naming): a draft identifier
+// column (Draft / Draft ID / Entry / Contest) to group rows into separate
+// drafts, a Player/Name column, and optionally Position/Team/Pick. Only the
+// user's OWN picks should be included per row — this does not parse full
+// 12-team draft boards, matching what checkCombo()/PortfolioScreen need.
+function parseDraftHistoryCSV(raw, playerPool) {
+  const cleaned = raw.replace(/^﻿/, '');
+  const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return { drafts: [], warnings: ['No data rows found in that file.'] };
+
+  const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim());
+  const idIdx   = ['draft', 'draft id', 'draftid', 'draft name', 'entry', 'entry id', 'entryid', 'contest', 'contest id']
+    .reduce((f, h) => f >= 0 ? f : headers.indexOf(h), -1);
+  const nameIdx = ['player', 'name', 'player name'].reduce((f, h) => f >= 0 ? f : headers.indexOf(h), -1);
+  const posIdx  = ['pos', 'position'].reduce((f, h) => f >= 0 ? f : headers.indexOf(h), -1);
+  const teamIdx = ['team', 'nfl team'].reduce((f, h) => f >= 0 ? f : headers.indexOf(h), -1);
+  const pickIdx = ['pick', 'overall pick', 'pick number', 'pick no'].reduce((f, h) => f >= 0 ? f : headers.indexOf(h), -1);
+
+  if (nameIdx === -1) {
+    return { drafts: [], warnings: ['Could not find a Player/Name column — check the CSV header row.'] };
+  }
+
+  const pool = playerPool || PLAYERS;
+  const groups = {};
+  const warnings = [];
+  let unmatched = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const parts = parseCSVLine(lines[i]);
+    const rawName = (parts[nameIdx] || '').trim();
+    if (!rawName) continue;
+    const draftKey = idIdx >= 0 ? (parts[idIdx] || '').trim() : '__single__';
+    const norm = normalizeName(rawName);
+    const match = pool.find(p => normalizeName(p.name) === norm);
+    if (!match) unmatched++;
+    const pos = ((posIdx >= 0 && parts[posIdx]) || match?.pos || 'UNK').toUpperCase().trim();
+    const team = ((teamIdx >= 0 && parts[teamIdx]) || match?.team || 'FA').toUpperCase().trim();
+    const pickVal = pickIdx >= 0 ? parseFloat(parts[pickIdx]) : NaN;
+    const key = draftKey || '__single__';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push({
+      name: match?.name || rawName, pos, team,
+      adp: match?.adp ?? null,
+      pick: isNaN(pickVal) ? null : pickVal,
+    });
+  }
+
+  const drafts = Object.entries(groups).map(([key, rows]) => {
+    rows.sort((a, b) => (a.pick ?? 999) - (b.pick ?? 999));
+    const label = key && key !== '__single__' ? key : null;
+    return {
+      id: `import-${key}-${rows.length}-${rows[0]?.name || ''}`.slice(0, 90),
+      slot: 'import',
+      date: Date.now(),
+      source: 'import',
+      label,
+      picks: rows.map((r, idx) => ({
+        slot: 'import', playerName: r.name, pos: r.pos,
+        pick: r.pick ?? idx + 1, isMine: true,
+      })),
+      roster: rows.map(r => ({ name: r.name, pos: r.pos, team: r.team, adp: r.adp })),
+    };
+  }).filter(d => d.picks.length > 0);
+
+  if (unmatched > 0) {
+    warnings.push(`${unmatched} player name${unmatched === 1 ? '' : 's'} not found in the current player pool — kept using CSV values, position/team may be approximate.`);
+  }
+
+  return { drafts, warnings };
+}
+
 // Validate live ADP dataset: top player must have ADP <= 5, and
 // at least 80 players must be parsed. Rejects corrupted/misaligned data.
 function isValidLiveADP(liveADP) {
@@ -836,6 +1043,22 @@ export default function App() {
     await saveCustomRankings(null);
   };
 
+  // Import a CSV of past draft history (e.g. Underdog's "My Drafts" export)
+  // so drafts played outside this app count toward portfolio exposure and
+  // live in-draft combo warnings. Re-importing the same file updates rather
+  // than duplicates, since parseDraftHistoryCSV() gives each draft a stable id.
+  const handleImportDraftHistory = async (raw) => {
+    const { drafts, warnings } = parseDraftHistoryCSV(raw, activePlayers);
+    if (drafts.length > 0) {
+      const incomingIds = new Set(drafts.map(d => d.id));
+      const kept = savedDrafts.filter(d => !incomingIds.has(d.id));
+      const updated = [...kept, ...drafts];
+      setSavedDrafts(updated);
+      await savePortfolio(updated);
+    }
+    return { added: drafts.length, warnings };
+  };
+
   const TOTAL = 12 * 18;
   const isMyTurn = pickToSlot(currentPick) === mySlot;
   const isDone = currentPick > TOTAL;
@@ -950,7 +1173,7 @@ export default function App() {
         />
       )}
       {screen === "portfolio" && (
-        <PortfolioScreen savedDrafts={savedDrafts} onBack={() => setScreen('home')} />
+        <PortfolioScreen savedDrafts={savedDrafts} onBack={() => setScreen('home')} onImportDrafts={handleImportDraftHistory} />
       )}
       {screen === "billy" && (
         <BillyCatcherScreen
@@ -1030,6 +1253,13 @@ export default function App() {
                 const p = activePlayers.find(pl => pl.id === d.playerId);
                 return { slot: pickToSlot(d.pick), playerName: p?.name, pos: p?.pos, pick: d.pick, isMine: d.isMine };
               }),
+              // BUGFIX: PortfolioScreen, the AI-advisor's portfolio context, and
+              // checkExposure() all read draft.roster (full player objects with
+              // name/pos/team/adp) — this was never populated before, so every
+              // saved draft silently showed 0% exposure everywhere. myRoster at
+              // save time already IS the finished roster, so just snapshot it.
+              roster: myRoster.map(p => ({ name: p.name, pos: p.pos, team: p.team, adp: p.adp })),
+              source: 'app',
             };
             const updated = [...savedDrafts, draftRecord];
             setSavedDrafts(updated);
@@ -1745,6 +1975,19 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
   const counts = rosterCounts(myRoster);
   const gap = picksUntilMyTurn(currentPick + 1, mySlot);
   const recentPicks = drafted.slice(-4).reverse();
+  const [showHealthDetail, setShowHealthDetail] = useState(false);
+  const rosterHealth = useMemo(
+    () => computeRosterHealthScore(myRoster, currentPick),
+    [myRoster, currentPick]
+  );
+  // Week 17 game-stack intel: for each rostered QB, surface their Week 17
+  // opponent so bring-back (opposing skill player) targets are easy to spot.
+  const week17Intel = useMemo(() => {
+    const seen = new Set();
+    return myRoster
+      .filter(p => p.pos === 'QB' && WEEK17_OPPONENT[p.team] && !seen.has(p.team) && seen.add(p.team))
+      .map(qb => ({ qb: qb.name, team: qb.team, opp: WEEK17_OPPONENT[qb.team] }));
+  }, [myRoster]);
 
   // Clipboard paste flow
   const handlePaste = async () => {
@@ -1911,7 +2154,7 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
       </div>
 
       {/* ── BOARD INTEL STRIP ── */}
-      {(rushingPos.length > 0 || round >= 13 || rosterInjuries.length > 0) && (
+      {(rushingPos.length > 0 || round >= 13 || rosterInjuries.length > 0 || rosterHealth.picks >= 3 || week17Intel.length > 0) && (
         <div style={{
           background: T.card, borderBottom:`1px solid ${T.border}`,
           padding:"6px 14px", display:"flex", gap:10, alignItems:"center",
@@ -1921,6 +2164,40 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
             fontFamily:"'Share Tech Mono',monospace",
             fontSize:9, color:T.dim, letterSpacing:1.5, flexShrink:0,
           }}>INTEL</span>
+          {rosterHealth.picks >= 3 && (
+            <button onClick={() => setShowHealthDetail(v => !v)} style={{
+              display:"flex", alignItems:"center", gap:5,
+              padding:"3px 8px",
+              background:`${rosterHealth.archetype.color}18`,
+              border:`1px solid ${rosterHealth.archetype.color}55`,
+              borderRadius:4, flexShrink:0, cursor:"pointer",
+            }}>
+              <span style={{
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:11, fontWeight:900, color:rosterHealth.archetype.color, letterSpacing:0.5,
+              }}>🧬 {rosterHealth.archetype.label.toUpperCase()}</span>
+              <span style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:9, color:T.dim,
+              }}>HEALTH {rosterHealth.score}</span>
+            </button>
+          )}
+          {week17Intel.map(w => (
+            <div key={w.team} style={{
+              display:"flex", alignItems:"center", gap:4,
+              padding:"3px 8px",
+              background:`${T.teal}18`, border:`1px solid ${T.teal}44`,
+              borderRadius:4, flexShrink:0,
+            }}>
+              <span style={{
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:11, fontWeight:900, color:T.teal, letterSpacing:0.5,
+              }}>🏈 WK17: {w.team} vs {w.opp}</span>
+              <span style={{
+                fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim,
+              }}>bring-back {w.opp}?</span>
+            </div>
+          ))}
           {rosterInjuries.map(inj => (
             <div key={inj.name} style={{
               display:"flex", alignItems:"center", gap:4,
@@ -1978,6 +2255,39 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
               }}>⏳ LONG WAIT — act now</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── ROSTER HEALTH DETAIL (expands from BUILD badge) ── */}
+      {showHealthDetail && rosterHealth.picks >= 3 && (
+        <div style={{
+          background: T.panel, borderBottom:`1px solid ${T.border}`,
+          padding:"10px 14px", flexShrink:0,
+        }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+            <span style={{
+              fontFamily:"'Barlow Condensed',sans-serif", fontSize:14, fontWeight:900,
+              color: rosterHealth.archetype.color, letterSpacing:0.5,
+            }}>{rosterHealth.archetype.label} · Health {rosterHealth.score}/100</span>
+            <button onClick={() => setShowHealthDetail(false)} style={{
+              background:"transparent", border:"none", color:T.dim, cursor:"pointer", fontSize:14,
+            }}>✕</button>
+          </div>
+          <div style={{
+            fontFamily:"'Barlow',sans-serif", fontSize:12, color:T.mute, marginBottom: (rosterHealth.flags.length || rosterHealth.strengths.length) ? 8 : 0,
+          }}>{rosterHealth.archetype.desc}</div>
+          {rosterHealth.flags.map((f, i) => (
+            <div key={`flag-${i}`} style={{
+              display:"flex", gap:6, alignItems:"flex-start", fontSize:12, color:T.amber, marginBottom:3,
+              fontFamily:"'Barlow',sans-serif",
+            }}><span>⚠</span><span>{f}</span></div>
+          ))}
+          {rosterHealth.strengths.map((s, i) => (
+            <div key={`str-${i}`} style={{
+              display:"flex", gap:6, alignItems:"flex-start", fontSize:12, color:T.green, marginBottom:3,
+              fontFamily:"'Barlow',sans-serif",
+            }}><span>✓</span><span>{s}</span></div>
+          ))}
         </div>
       )}
 
@@ -3596,6 +3906,10 @@ function FastDraftScreen({ mySlot, currentPick, isMyTurn, isDone,
   const upcoming = myUpcomingPicks(mySlot, currentPick);
   const counts = rosterCounts(myRoster);
   const myRosterNames = new Set(myRoster.map(p => p.name));
+  const rosterHealth = useMemo(
+    () => computeRosterHealthScore(myRoster, currentPick),
+    [myRoster, currentPick]
+  );
 
   // Check if a target was just taken
   const recentPick = drafted[drafted.length - 1];
@@ -3662,6 +3976,15 @@ function FastDraftScreen({ mySlot, currentPick, isMyTurn, isDone,
               }}>
                 PICK {currentPick} · RD {round} · SLOT {pickToSlot(currentPick)}
               </span>
+              {rosterHealth.picks >= 3 && (
+                <span style={{
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:9, color:rosterHealth.archetype.color, letterSpacing:0.5,
+                  background:`${rosterHealth.archetype.color}18`,
+                  border:`1px solid ${rosterHealth.archetype.color}55`,
+                  padding:"2px 7px", borderRadius:10,
+                }}>🧬 {rosterHealth.archetype.label.toUpperCase()} · {rosterHealth.score}</span>
+              )}
             </div>
             <div style={{
               fontFamily:"'Barlow Condensed',sans-serif",
@@ -4281,6 +4604,10 @@ function AutopilotDraftScreen({ mySlot, currentPick, isMyTurn, isDone,
   const myRosterNames = new Set(myRoster.map(p => p.name));
   const targetAvail = targets.filter(t => !myRosterNames.has(t.name) && available.some(a => a.id === t.id));
   const timeUntilPick = picksAway > 0 ? picksAway * draftSpeed : 0;
+  const rosterHealth = useMemo(
+    () => computeRosterHealthScore(myRoster, currentPick),
+    [myRoster, currentPick]
+  );
 
   if (isMyTurn && !isDone) {
     // FULL SCREEN YOUR TURN
@@ -4480,6 +4807,15 @@ function AutopilotDraftScreen({ mySlot, currentPick, isMyTurn, isDone,
               fontFamily:"'Share Tech Mono',monospace",
               fontSize:10, color:T.dim,
             }}>PICK {currentPick} · RD {round}</span>
+            {rosterHealth.picks >= 3 && (
+              <span style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:9, color:rosterHealth.archetype.color, letterSpacing:0.5,
+                background:`${rosterHealth.archetype.color}18`,
+                border:`1px solid ${rosterHealth.archetype.color}55`,
+                padding:"2px 7px", borderRadius:10,
+              }}>🧬 {rosterHealth.archetype.label.toUpperCase()} · {rosterHealth.score}</span>
+            )}
           </div>
           <div style={{
             fontFamily:"'Barlow Condensed',sans-serif",
@@ -6675,11 +7011,61 @@ function WelcomeScreen({ onStart }) {
 }
 
 // ── PORTFOLIO ANALYTICS ─────────────────────────────────────────────────────
-function PortfolioScreen({ savedDrafts, onBack }) {
+function PortfolioScreen({ savedDrafts, onBack, onImportDrafts }) {
   const total = savedDrafts.length;
+  const [importMsg, setImportMsg] = useState(null); // { type: 'ok'|'err', text }
+  const [importing, setImporting] = useState(false);
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (!file.name.endsWith('.csv')) {
+      setImportMsg({ type:'err', text:'Please export your draft history as CSV first.' });
+      return;
+    }
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const { added, warnings } = await onImportDrafts(text);
+      if (added > 0) {
+        setImportMsg({ type:'ok', text:`Imported ${added} draft${added===1?'':'s'}.${warnings.length ? ' ' + warnings.join(' ') : ''}` });
+      } else {
+        setImportMsg({ type:'err', text: warnings[0] || 'No drafts found in that file.' });
+      }
+    } catch {
+      setImportMsg({ type:'err', text:'Could not read that file.' });
+    }
+    setImporting(false);
+  };
+
+  const ImportBlock = (
+    <div style={{ background:T.panel, borderRadius:12, border:`1px solid ${T.border}`, padding:16, marginBottom:14 }}>
+      <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:8 }}>IMPORT DRAFT HISTORY</div>
+      <label style={{
+        display:"block", padding:"11px 14px", borderRadius:8,
+        background:T.card, border:`1px solid ${T.border}`,
+        color: T.mute, fontFamily:"'Share Tech Mono',monospace", fontSize:10,
+        cursor:"pointer", letterSpacing:1, textAlign:"center",
+      }}>
+        {importing ? 'IMPORTING…' : '📂  IMPORT PAST DRAFTS (.CSV)'}
+        <input type="file" accept=".csv" style={{ display:"none" }}
+          onChange={e => { handleFile(e.target.files[0]); e.target.value = ''; }} />
+      </label>
+      <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, marginTop:6, lineHeight:1.6 }}>
+        Adds drafts played outside this app (e.g. Underdog) to your exposure and combo warnings. Needs a Player/Name column, plus an optional Draft/Entry column to group multiple drafts and a Position column.
+      </div>
+      {importMsg && (
+        <div style={{
+          marginTop:8, fontFamily:"'Barlow',sans-serif", fontSize:12,
+          color: importMsg.type === 'ok' ? T.green : T.red,
+        }}>{importMsg.text}</div>
+      )}
+    </div>
+  );
+
   if (total === 0) return (
-    <div style={{ minHeight:"100svh", background:T.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16 }}>
+    <div style={{ minHeight:"100svh", background:T.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16, padding:16 }}>
       <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:11, color:T.dim }}>NO DRAFTS SAVED YET</div>
+      <div style={{ width:"100%", maxWidth:420 }}>{ImportBlock}</div>
       <button onClick={onBack} style={{ padding:"10px 20px", background:T.card, color:T.mute, border:`1px solid ${T.border}`, borderRadius:8, fontFamily:"'Barlow Condensed',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>BACK</button>
     </div>
   );
@@ -6724,7 +7110,7 @@ function PortfolioScreen({ savedDrafts, onBack }) {
     const rbs = roster.filter(p => p.pos === 'RB').length;
     const qbs = roster.filter(p => p.pos === 'QB').length;
     const tes = roster.filter(p => p.pos === 'TE').length;
-    const earlyRbs = roster.filter(p => p.pos === 'RB' && p.adp <= 36).length;
+    const earlyRbs = roster.filter(p => p.pos === 'RB' && p.adp != null && p.adp <= 36).length;
     if (earlyRbs >= 2) return 'HERO RB';
     if (rbs <= 2) return 'ZERO RB';
     if (rbs >= 6) return 'ROBUST RB';
@@ -6765,6 +7151,7 @@ function PortfolioScreen({ savedDrafts, onBack }) {
       </div>
 
       <div style={{ padding:"16px 16px 0" }}>
+        {ImportBlock}
         {/* Position averages */}
         <div style={{ background:T.panel, borderRadius:12, border:`1px solid ${T.border}`, padding:16, marginBottom:14 }}>
           <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:12 }}>AVG POSITION FILL</div>
