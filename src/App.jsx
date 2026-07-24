@@ -657,7 +657,7 @@ function effectiveAdp(player, customRankings, liveADP) {
     // Player not in custom rankings — sort below all ranked players
     return 999;
   }
-  // 2. Live ADP from FantasyPros Best Ball — only if dataset passes validation
+  // 2. Live Best Ball ADP (fantasypoints.com) — only if dataset passes validation
   if (isValidLiveADP(liveADP)) {
     const norm = normalizeName(player.name);
     const match = liveADP.players.find(p => normalizeName(p.name) === norm);
@@ -6517,7 +6517,7 @@ function WelcomeScreen({ onStart }) {
     {
       icon: "📈",
       title: "Live Best Ball ADP",
-      desc: "Underdog & DraftKings ADP pulled from FantasyPros in real time. Always current, position-by-position.",
+      desc: "Underdog & DraftKings ADP updated live throughout the day. Always current, position-by-position.",
       color: "#5B8CFF",
     },
     {
