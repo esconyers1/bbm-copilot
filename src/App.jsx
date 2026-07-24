@@ -775,10 +775,6 @@ export default function App() {
   // Show welcome screen to first-time visitors; skip on return visits
   // Bump key version to force existing users to see the redesigned screen
   const [screen, setScreen] = useState(() => {
-    // Deep link: picksetter.com/#worldcup (or ?worldcup) lands straight in the tracker
-    try {
-      if (window.location.hash === '#worldcup' || window.location.search.includes('worldcup')) return 'worldcup';
-    } catch {}
     return localStorage.getItem('picksetter_v1_seen') ? 'home' : 'welcome';
   });
   const [platform, setPlatform] = useState('underdog'); // 'underdog' | 'dk'
@@ -924,7 +920,6 @@ export default function App() {
           savedDraftsCount={savedDrafts.length}
           onDraft={() => setScreen('setup')}
           onDFS={() => setScreen('dfs')}
-          onWorldCup={() => setScreen('worldcup')}
           onPortfolio={() => setScreen('portfolio')}
         />
       )}
@@ -945,7 +940,6 @@ export default function App() {
           }}
           onBillyCatcher={() => setScreen('billy')}
           onDFS={() => setScreen('dfs')}
-          onWorldCup={() => setScreen('worldcup')}
           onHome={() => setScreen('home')}
           savedDraftsCount={savedDrafts.length}
           customRankings={customRankings}
@@ -1045,9 +1039,6 @@ export default function App() {
       )}
       {screen === "dfs" && (
         <DFSScreen tier={tier} onBack={() => setScreen('home')} />
-      )}
-      {screen === "worldcup" && (
-        <WorldCupScreen tier={tier} onBack={() => setScreen('home')} />
       )}
     </>
   );
@@ -1161,7 +1152,7 @@ function ProCodeModal({ onClose, onUnlock }) {
 }
 
 // ── SETUP ─────────────────────────────────────────────────────────────────────
-function SetupScreen({ mySlot, setMySlot, platform, setPlatform, tier, onTierUnlock, onStart, onBillyCatcher, onDFS, onWorldCup, onHome, savedDraftsCount, customRankings, onImportRankings, onClearRankings, onPortfolio, adpStatus }) {
+function SetupScreen({ mySlot, setMySlot, platform, setPlatform, tier, onTierUnlock, onStart, onBillyCatcher, onDFS, onHome, savedDraftsCount, customRankings, onImportRankings, onClearRankings, onPortfolio, adpStatus }) {
   const [draftMode, setDraftMode] = useState('full');
   const [draftSpeed, setDraftSpeed] = useState(platform === 'dk' ? 30 : 20);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
@@ -1309,38 +1300,6 @@ function SetupScreen({ mySlot, setMySlot, platform, setPlatform, tier, onTierUnl
       </div>
 
       <div style={{ padding: "20px 20px 40px", flex: 1, overflowY: "auto" }}>
-
-        {/* WORLD CUP '26 — live event banner (top placement during tournament) */}
-        <button onClick={onWorldCup} style={{
-          width:"100%", marginBottom:14, padding:"12px 16px",
-          background:`linear-gradient(90deg, ${T.blue}1C 0%, ${T.blue}08 100%)`,
-          border:`1px solid ${T.blue}55`, borderRadius:12, cursor:"pointer",
-          display:"flex", alignItems:"center", justifyContent:"space-between",
-          fontFamily:"'Barlow',sans-serif",
-        }}>
-          <div style={{display:"flex", alignItems:"center", gap:10}}>
-            <span style={{fontSize:18}}>⚽</span>
-            <div style={{textAlign:"left"}}>
-              <div style={{
-                fontFamily:"'Barlow Condensed',sans-serif",
-                fontSize:15, fontWeight:900, color:T.blue, letterSpacing:0.5,
-                display:"flex", alignItems:"center", gap:6,
-              }}>
-                WORLD CUP &rsquo;26
-                <span style={{
-                  fontFamily:"'Share Tech Mono',monospace",
-                  fontSize:8, color:T.green, letterSpacing:1,
-                  background:`${T.green}18`, border:`1px solid ${T.green}44`,
-                  padding:"1px 5px", borderRadius:4,
-                }}>● LIVE NOW</span>
-              </div>
-              <div style={{fontSize:10, color:T.mute, marginTop:1}}>
-                Live scores · group standings · fixtures
-              </div>
-            </div>
-          </div>
-          <span style={{color:T.blue, fontSize:18}}>→</span>
-        </button>
 
         {/* DFS PICKSETTER — hero entry (top placement) */}
         <button onClick={onDFS} style={{
@@ -6458,10 +6417,10 @@ No headers, no bullets, just 5 lines.`,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HOME — product hub. Draft Intelligence is primary (it monetizes); DFS and
-// World Cup are secondary tiles. Setup/DFS/WC live one tap deeper.
+// HOME — product hub. Draft Intelligence is primary (it monetizes); DFS is
+// a secondary tile. Setup/DFS live one tap deeper.
 // ═══════════════════════════════════════════════════════════════════════════
-function HomeScreen({ tier, savedDraftsCount, onDraft, onDFS, onWorldCup, onPortfolio }) {
+function HomeScreen({ tier, savedDraftsCount, onDraft, onDFS, onPortfolio }) {
   const card = (accent) => ({
     width: '100%', textAlign: 'left', cursor: 'pointer', borderRadius: 14,
     background: `${accent}0E`, border: `1px solid ${accent}33`,
@@ -6527,14 +6486,6 @@ function HomeScreen({ tier, savedDraftsCount, onDraft, onDFS, onWorldCup, onPort
         <span style={{ color: T.teal, fontSize: 18 }}>→</span>
       </button>
 
-      <button onClick={onWorldCup} style={card(T.blue)}>
-        <div>
-          <div style={title(T.blue, 17)}>⚽ WORLD CUP &rsquo;26 <span style={chip(T.green)}>● LIVE NOW</span></div>
-          <div style={sub}>Live scores · group standings · P.S. match intel · thru Jul 19</div>
-        </div>
-        <span style={{ color: T.blue, fontSize: 18 }}>→</span>
-      </button>
-
       {savedDraftsCount > 0 && (
         <button onClick={onPortfolio} style={card(T.green)}>
           <div>
@@ -6549,337 +6500,6 @@ function HomeScreen({ tier, savedDraftsCount, onDraft, onDFS, onWorldCup, onPort
         fontFamily: "'Share Tech Mono',monospace", fontSize: 9, color: T.dim,
         letterSpacing: 1, textAlign: 'center', marginTop: 18,
       }}>NO ACCOUNT · NO INSTALL · WORKS ON IPHONE, ANDROID &amp; DESKTOP</div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// WORLD CUP 2026 TRACKER — live scores, fixtures, group standings
-// Display-only (analytics/tracking guardrail — no picks, no odds).
-// ═══════════════════════════════════════════════════════════════════════════
-function wcDateStr(offsetDays) {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
-  return `${y}${m}${dd}`;
-}
-
-function wcDayLabel(offsetDays) {
-  if (offsetDays === 0) return 'TODAY';
-  if (offsetDays === -1) return 'YESTERDAY';
-  if (offsetDays === 1) return 'TOMORROW';
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase();
-}
-
-function WcMatchCard({ m, fav, onUseAI, intel, onIntel }) {
-  const live = m.state === 'in';
-  const done = m.state === 'post';
-  const kickoff = new Date(m.date).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const setIntel = (text) => onIntel(m.id, text);
-  const [intelLoading, setIntelLoading] = useState(false);
-
-  const getIntel = async () => {
-    if (intelLoading || intel) return;
-    if (!onUseAI()) return;                    // free-tier daily gate
-    setIntelLoading(true);
-    try {
-      const res = await fetch('/api/ai', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', max_tokens: 200,
-          system: 'You are a soccer analyst for a stats app. Give two sentences max on the matchup — recent form, tactical angle, key players. End with a final line: P.S. — [one sharp insight, max 12 words]. Analytics only; never mention betting, odds, or gambling.',
-          messages: [{ role: 'user', content: `World Cup 2026 ${m.stage || 'group stage'} match: ${m.away.name} at ${m.home.name}, ${m.venue}${m.city ? ', ' + m.city : ''}. Status: ${m.detail}. Score: ${m.home.abbr} ${m.home.score || 0}–${m.away.score || 0} ${m.away.abbr}.` }],
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      const text = data.content?.find(b => b.type === 'text')?.text || '';
-      setIntel(text.trim() || 'No intel available right now.');
-    } catch {
-      setIntel('Intel unavailable — check connection.');
-    } finally {
-      setIntelLoading(false);
-    }
-  };
-  const Row = ({ t, other }) => {
-    const winLoss = done && (t.winner ? 1 : (other.winner ? -1 : 0));
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
-        {t.logo
-          ? <img src={t.logo} alt="" width={20} height={20} style={{ borderRadius: 3, flexShrink: 0 }} />
-          : <span style={{ width: 20 }} />}
-        <span style={{
-          flex: 1, fontSize: 14, fontWeight: winLoss === 1 ? 800 : 600,
-          color: winLoss === -1 ? T.mute : T.text,
-        }}>{t.name}</span>
-        {(live || done) && (
-          <span style={{
-            fontFamily: "'Share Tech Mono',monospace", fontSize: 16,
-            fontWeight: 800, color: winLoss === -1 ? T.mute : T.text,
-          }}>{t.score}</span>
-        )}
-      </div>
-    );
-  };
-  return (
-    <div style={{
-      background: T.card,
-      border: `1px solid ${fav ? `${T.gold}55` : live ? `${T.green}55` : T.border}`,
-      borderRadius: 12, padding: '10px 14px', marginBottom: 8,
-    }}>
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        fontSize: 10, color: T.mute, marginBottom: 4,
-        fontFamily: "'Share Tech Mono',monospace", letterSpacing: 0.5,
-      }}>
-        <span>{fav ? '★ ' : ''}{m.city ? m.city.toUpperCase() : m.venue.toUpperCase()}</span>
-        {live ? (
-          <span style={{ color: T.green, fontWeight: 700 }}>● LIVE {m.clock}</span>
-        ) : done ? (
-          <span>FT</span>
-        ) : (
-          <span>{kickoff}{m.tv && m.tv.length ? ` · ${m.tv[0]}` : ''}</span>
-        )}
-      </div>
-      <Row t={m.home} other={m.away} />
-      <Row t={m.away} other={m.home} />
-      {!intel && (
-        <button onClick={getIntel} disabled={intelLoading} style={{
-          marginTop: 8, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
-          background: `${T.gold}14`, border: `1px solid ${T.gold}44`,
-          fontFamily: "'Share Tech Mono',monospace", fontSize: 9,
-          color: T.gold, letterSpacing: 1, opacity: intelLoading ? 0.6 : 1,
-        }}>{intelLoading ? 'ANALYZING…' : 'P.S. MATCH INTEL'}</button>
-      )}
-      {intel && (
-        <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.5, color: T.mute }}>
-          {intel.split('\n').filter(Boolean).map((ln, i) =>
-            ln.trim().startsWith('P.S.') ? (
-              <div key={i} style={{ color: T.gold, fontWeight: 600, marginTop: 4 }}>{ln}</div>
-            ) : (
-              <div key={i}>{ln}</div>
-            )
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function WcGroupTable({ g, favs, onToggleFav }) {
-  const th = { fontSize: 9, color: T.dim, fontFamily: "'Share Tech Mono',monospace", textAlign: 'center', padding: '2px 4px' };
-  const td = { fontSize: 12, color: T.mute, fontFamily: "'Share Tech Mono',monospace", textAlign: 'center', padding: '3px 4px' };
-  return (
-    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: '10px 12px', marginBottom: 10 }}>
-      <div style={{
-        fontFamily: "'Barlow Condensed',sans-serif", fontSize: 14, fontWeight: 900,
-        color: T.slate, letterSpacing: 1, marginBottom: 6,
-      }}>{g.name.toUpperCase()}</div>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th style={{ ...th, textAlign: 'left' }}>TEAM</th>
-            <th style={th}>GP</th><th style={th}>W</th><th style={th}>D</th>
-            <th style={th}>L</th><th style={th}>GD</th><th style={th}>PTS</th>
-            <th style={th}>★</th>
-          </tr>
-        </thead>
-        <tbody>
-          {g.teams.map((t, i) => (
-            <tr key={t.abbr || i} style={{ borderTop: `1px solid ${T.border}` }}>
-              <td style={{ ...td, textAlign: 'left' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: i < 2 ? T.green : T.dim, fontSize: 10, width: 10 }}>{i + 1}</span>
-                  {t.logo && <img src={t.logo} alt="" width={16} height={16} style={{ borderRadius: 2 }} />}
-                  <span style={{ fontFamily: "'Barlow',sans-serif", fontSize: 12, fontWeight: 700, color: T.text }}>{t.name}</span>
-                </span>
-              </td>
-              <td style={td}>{t.gp}</td><td style={td}>{t.w}</td><td style={td}>{t.d}</td>
-              <td style={td}>{t.l}</td>
-              <td style={{ ...td, color: t.gd > 0 ? T.green : t.gd < 0 ? T.mute : T.dim }}>{t.gd > 0 ? `+${t.gd}` : t.gd}</td>
-              <td style={{ ...td, fontWeight: 800, color: T.text }}>{t.pts}</td>
-              <td style={{ ...td, padding: '3px 0' }}>
-                <button onClick={() => onToggleFav(t.abbr)} title="Follow team" style={{
-                  background: 'none', border: 'none', cursor: 'pointer', fontSize: 13,
-                  color: favs.includes(t.abbr) ? T.gold : T.dim, padding: 0,
-                }}>{favs.includes(t.abbr) ? '★' : '☆'}</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function WorldCupScreen({ tier, onBack }) {
-  const [tab, setTab] = useState('matches');           // 'matches' | 'groups'
-  const [dayOff, setDayOff] = useState(0);
-  const [matchData, setMatchData] = useState({});       // dates → matches[]
-  const [groups, setGroups] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState(null);
-
-  // MY TEAMS — followed countries (abbrs), persisted
-  const [favs, setFavs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('ps_wc_favs') || '[]'); } catch { return []; }
-  });
-  const toggleFav = (abbr) => setFavs(f => {
-    const n = f.includes(abbr) ? f.filter(x => x !== abbr) : [...f, abbr];
-    try { localStorage.setItem('ps_wc_favs', JSON.stringify(n)); } catch {}
-    return n;
-  });
-
-  // P.S. Match Intel — free tier 3/day, Pro unlimited
-  const WC_AI_FREE = 3;
-  const [aiUses, setAiUses] = useState(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem('ps_wc_ai_uses') || 'null');
-      return raw && raw.d === new Date().toDateString() ? (raw.n || 0) : 0;
-    } catch { return 0; }
-  });
-  const [atAiLimit, setAtAiLimit] = useState(false);
-  const [intelMap, setIntelMap] = useState({});       // match id → intel text (survives tab switches)
-  const cacheIntel = (id, text) => setIntelMap(p => ({ ...p, [id]: text }));
-  const useAI = () => {
-    if (isPro(tier)) return true;
-    if (aiUses >= WC_AI_FREE) { setAtAiLimit(true); return false; }
-    const n = aiUses + 1;
-    setAiUses(n);
-    if (n >= WC_AI_FREE) setAtAiLimit(true);
-    try { localStorage.setItem('ps_wc_ai_uses', JSON.stringify({ d: new Date().toDateString(), n })); } catch {}
-    return true;
-  };
-
-  const dates = wcDateStr(dayOff);
-  const raw = matchData[dates];
-  // followed teams' matches pinned to top
-  const matches = raw && [...raw].sort((a, b) => {
-    const af = favs.includes(a.home.abbr) || favs.includes(a.away.abbr) ? 0 : 1;
-    const bf = favs.includes(b.home.abbr) || favs.includes(b.away.abbr) ? 0 : 1;
-    return af - bf || String(a.date).localeCompare(String(b.date));
-  });
-
-  useEffect(() => {
-    if (tab !== 'matches') return;
-    let dead = false;
-    const load = () => {
-      setErr(null);
-      if (!matchData[dates]) setLoading(true);
-      fetch(`/api/worldcup?dates=${dates}`)
-        .then(r => r.ok ? r.json() : Promise.reject(r.status))
-        .then(d => { if (!dead) setMatchData(prev => ({ ...prev, [dates]: d.matches || [] })); })
-        .catch(() => { if (!dead && !matchData[dates]) setErr('Could not load matches — try again shortly.'); })
-        .finally(() => { if (!dead) setLoading(false); });
-    };
-    load();
-    const iv = setInterval(load, 60000);                // refresh scores every 60s
-    return () => { dead = true; clearInterval(iv); };
-  }, [tab, dates]);
-
-  useEffect(() => {
-    if (tab !== 'groups' || groups) return;
-    let dead = false;
-    setErr(null); setLoading(true);
-    fetch('/api/worldcup?view=standings')
-      .then(r => r.ok ? r.json() : Promise.reject(r.status))
-      .then(d => { if (!dead) setGroups(d.groups || []); })
-      .catch(() => { if (!dead) setErr('Could not load standings — try again shortly.'); })
-      .finally(() => { if (!dead) setLoading(false); });
-    return () => { dead = true; };
-  }, [tab, groups]);
-
-  const tabBtn = (id, label) => (
-    <button onClick={() => setTab(id)} style={{
-      flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer',
-      fontFamily: "'Barlow Condensed',sans-serif", fontSize: 14, fontWeight: 900, letterSpacing: 1,
-      background: tab === id ? `${T.blue}22` : 'transparent',
-      border: `1px solid ${tab === id ? `${T.blue}55` : T.border}`,
-      color: tab === id ? T.blue : T.mute,
-    }}>{label}</button>
-  );
-
-  return (
-    <div style={{ minHeight: '100vh', background: T.bg, padding: '18px 16px 40px', maxWidth: 560, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-        <button onClick={onBack} style={{
-          background: 'none', border: `1px solid ${T.border}`, borderRadius: 8,
-          color: T.mute, fontSize: 14, padding: '6px 12px', cursor: 'pointer',
-        }}>←</button>
-        <div>
-          <div style={{
-            fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 900,
-            color: T.text, letterSpacing: 1,
-          }}>WORLD CUP &rsquo;26 <span style={{ color: T.blue }}>TRACKER</span></div>
-          <div style={{ fontSize: 10, color: T.dim, fontFamily: "'Share Tech Mono',monospace", letterSpacing: 0.5 }}>
-            LIVE SCORES · STANDINGS · JUN 11 – JUL 19
-          </div>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-        {tabBtn('matches', 'MATCHES')}
-        {tabBtn('groups', 'GROUPS')}
-      </div>
-
-      {tab === 'matches' && (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <button onClick={() => setDayOff(o => o - 1)} style={{
-              background: T.card, border: `1px solid ${T.border}`, borderRadius: 8,
-              color: T.mute, padding: '4px 14px', cursor: 'pointer', fontSize: 14,
-            }}>‹</button>
-            <span style={{
-              fontFamily: "'Share Tech Mono',monospace", fontSize: 12, color: T.slate, letterSpacing: 1,
-            }}>{wcDayLabel(dayOff)}</span>
-            <button onClick={() => setDayOff(o => o + 1)} style={{
-              background: T.card, border: `1px solid ${T.border}`, borderRadius: 8,
-              color: T.mute, padding: '4px 14px', cursor: 'pointer', fontSize: 14,
-            }}>›</button>
-          </div>
-          {err && !matches && <div style={{ color: T.red, fontSize: 12, textAlign: 'center', padding: 20 }}>{err}</div>}
-          {loading && !matches && <div style={{ color: T.dim, fontSize: 12, textAlign: 'center', padding: 20 }}>Loading…</div>}
-          {matches && matches.length === 0 && (
-            <div style={{ color: T.dim, fontSize: 12, textAlign: 'center', padding: 20 }}>No matches this day.</div>
-          )}
-          {atAiLimit && !isPro(tier) && (
-            <div style={{
-              background: `${T.gold}10`, border: `1px solid ${T.gold}33`, borderRadius: 10,
-              padding: '8px 12px', marginBottom: 10, fontSize: 11, color: T.gold,
-              fontFamily: "'Share Tech Mono',monospace", textAlign: 'center', letterSpacing: 0.5,
-            }}>FREE MATCH INTEL USED ({WC_AI_FREE}/DAY) — PRO = UNLIMITED. UPGRADE ON HOME SCREEN.</div>
-          )}
-          {matches && matches.map(m => (
-            <WcMatchCard key={m.id} m={m} onUseAI={useAI}
-              intel={intelMap[m.id]} onIntel={cacheIntel}
-              fav={favs.includes(m.home.abbr) || favs.includes(m.away.abbr)} />
-          ))}
-          {matches && matches.length > 0 && favs.length === 0 && (
-            <div style={{ fontSize: 10, color: T.dim, textAlign: 'center', marginTop: 4, fontFamily: "'Share Tech Mono',monospace" }}>
-              TIP: ★ TEAMS IN THE GROUPS TAB — THEIR MATCHES PIN TO THE TOP
-            </div>
-          )}
-        </>
-      )}
-
-      {tab === 'groups' && (
-        <>
-          {err && !groups && <div style={{ color: T.red, fontSize: 12, textAlign: 'center', padding: 20 }}>{err}</div>}
-          {loading && !groups && <div style={{ color: T.dim, fontSize: 12, textAlign: 'center', padding: 20 }}>Loading…</div>}
-          {groups && groups.map(g => <WcGroupTable key={g.name} g={g} favs={favs} onToggleFav={toggleFav} />)}
-          {groups && (
-            <div style={{ fontSize: 10, color: T.dim, textAlign: 'center', marginTop: 4, fontFamily: "'Share Tech Mono',monospace" }}>
-              TOP 2 ADVANCE (GREEN) + 8 BEST THIRD-PLACE TEAMS · ★ = FOLLOW TEAM
-            </div>
-          )}
-        </>
-      )}
-
-      <div style={{ marginTop: 18 }}>
-        <EmailCapture source="worldcup" />
-      </div>
     </div>
   );
 }
