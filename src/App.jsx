@@ -21,7 +21,7 @@ const STYLE = `
 `;
 
 // Product identity
-const PRODUCT = { name: 'COPILOT', tagline: 'Best Ball Intelligence' };
+const PRODUCT = { name: 'PICKSETTER', tagline: 'Set Your Edge.' };
 
 // ── COLORS ───────────────────────────────────────────────────────────────────
 const T = {
@@ -34,14 +34,16 @@ const T = {
   text:    '#EBEEf8',
   mute:    '#8892AA',
   dim:     '#475068',
-  gold:    '#FFD166',
+  gold:    '#FFD166',           // EDGE moments only — recs, P.S. lines, unlocks
   goldDim: 'rgba(255,209,102,0.15)',
   green:   '#1DD882',
-  red:     '#FF4E6A',
+  red:     '#FF5C5C',           // ALERT red — true loss-aversion moments only (locked)
   amber:   '#FFB340',
   blue:    '#5B8CFF',
   purple:  '#A78BFA',
   teal:    '#2DD4BF',
+  slate:   '#94A3B8',           // OPPONENTS — neutral slate, never red (locked)
+  slateDim:'rgba(148,163,184,0.15)',
 };
 
 const POS_C = {
@@ -283,7 +285,7 @@ function scorePlayer(player, currentPick, myRoster, tierMap, scarcity, mySlot) {
   const tierInfo = tierMap?.[player.id];
   if (tierInfo?.lastInTier) {
     score += 20;
-    const tierLabel = tierInfo.tier === 1 ? `Last ${player.pos}1 Available` : `Last T${tierInfo.tier} ${player.pos}`;
+    const tierLabel = tierInfo.tier === 1 ? `Last Elite ${player.pos}` : `Last Tier ${tierInfo.tier} ${player.pos}`;
     reasons.push({ t:'tier', text:tierLabel });
   }
 
@@ -481,9 +483,55 @@ function generateOpponentInsights(myRoster, leftRoster, rightRoster, currentPick
 
 
 // ── PORTFOLIO INTEGRATION ──────────────────────────────────────────────────
-const PORTFOLIO_KEY = 'bbm_drafts_v1';
-const RANKINGS_KEY  = 'bbm_custom_rankings_v1';
-const ADP_CACHE_KEY = 'bbm_adp_cache_v1';
+const PORTFOLIO_KEY  = 'bbm_drafts_v1';
+const RANKINGS_KEY   = 'bbm_custom_rankings_v1';
+const ADP_CACHE_KEY  = 'bbm_adp_cache_v1';
+const TIER_KEY       = 'bbm_tier_v1'; // 'free' | 'pro' | 'elite'
+const TIER_CODE_KEY  = 'bbm_code_v1'; // the validated access code
+
+// ── TIER HELPERS ─────────────────────────────────────────────────────────────
+function loadTier() {
+  try { return localStorage.getItem(TIER_KEY) || 'free'; } catch { return 'free'; }
+}
+function saveTier(tier, code) {
+  try {
+    localStorage.setItem(TIER_KEY, tier);
+    if (code) localStorage.setItem(TIER_CODE_KEY, code);
+  } catch {}
+}
+function isPro(tier)   { return tier === 'pro' || tier === 'elite'; }
+function isElite(tier) { return tier === 'elite'; }
+
+// Stable per-browser device ID — used by /api/verify to limit each
+// access code to a few devices (anti-sharing) without breaking the
+// "works on any device all season" promise for the actual buyer.
+function getDeviceId() {
+  try {
+    let id = localStorage.getItem('bbm_device_id');
+    if (!id) {
+      id = (crypto.randomUUID && crypto.randomUUID()) ||
+        'd-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+      localStorage.setItem('bbm_device_id', id);
+    }
+    return id;
+  } catch {
+    return 'd-anon';
+  }
+}
+
+async function verifyCode(code) {
+  try {
+    const res = await fetch('/api/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, device: getDeviceId() }),
+    });
+    const data = await res.json();
+    return data; // { valid, tier } | { valid: false, reason? }
+  } catch {
+    return { valid: false, error: 'Network error' };
+  }
+}
 
 async function loadPortfolio() {
   try { const v = localStorage.getItem(PORTFOLIO_KEY); return v ? JSON.parse(v) : []; }
@@ -577,7 +625,18 @@ function parseRankingsCSV(raw) {
   return result;
 }
 
-// Get effective ADP: customRankings > liveADP > hardcoded
+// Validate live ADP dataset: top player must have ADP <= 5, and
+// at least 80 players must be parsed. Rejects corrupted/misaligned data.
+function isValidLiveADP(liveADP) {
+  if (!liveADP?.players?.length || liveADP.players.length < 80) return false;
+  const sorted = [...liveADP.players].sort((a, b) => a.adp - b.adp);
+  const topAdp = sorted[0]?.adp;
+  // If the #1 player has ADP > 5, the column mapping is wrong — reject
+  if (topAdp == null || isNaN(topAdp) || topAdp > 5) return false;
+  return true;
+}
+
+// Get effective ADP: customRankings > validated liveADP > hardcoded
 function effectiveAdp(player, customRankings, liveADP) {
   // 1. Custom imported rankings take highest priority
   if (customRankings) {
@@ -598,13 +657,13 @@ function effectiveAdp(player, customRankings, liveADP) {
     // Player not in custom rankings — sort below all ranked players
     return 999;
   }
-  // 2. Live ADP from FantasyPros Best Ball
-  if (liveADP?.players?.length) {
+  // 2. Live ADP from FantasyPros Best Ball — only if dataset passes validation
+  if (isValidLiveADP(liveADP)) {
     const norm = normalizeName(player.name);
     const match = liveADP.players.find(p => normalizeName(p.name) === norm);
     if (match) return match.adp;
   }
-  // 3. Hardcoded fallback
+  // 3. Hardcoded fallback (authoritative 2026 data)
   return player.adp;
 }
 
@@ -715,9 +774,13 @@ function rosterCounts(roster) {
 export default function App() {
   // Show welcome screen to first-time visitors; skip on return visits
   // Bump key version to force existing users to see the redesigned screen
-  const [screen, setScreen] = useState(() =>
-    localStorage.getItem('copilot_v3_seen') ? 'setup' : 'welcome'
-  );
+  const [screen, setScreen] = useState(() => {
+    // Deep link: picksetter.com/#worldcup (or ?worldcup) lands straight in the tracker
+    try {
+      if (window.location.hash === '#worldcup' || window.location.search.includes('worldcup')) return 'worldcup';
+    } catch {}
+    return localStorage.getItem('picksetter_v1_seen') ? 'home' : 'welcome';
+  });
   const [platform, setPlatform] = useState('underdog'); // 'underdog' | 'dk'
   const [mySlot, setMySlot] = useState(6);
   const [drafted, setDrafted] = useState([]);
@@ -734,6 +797,7 @@ export default function App() {
   const [queueEntryActive, setQueueEntryActive] = useState(null);
   const [liveADP, setLiveADP] = useState(null);
   const [adpLoading, setAdpLoading] = useState(false);
+  const [tier, setTier] = useState(() => loadTier());
 
   // Load portfolio + custom rankings + cached ADP from storage on mount
   useEffect(() => {
@@ -853,11 +917,22 @@ export default function App() {
     <>
       <style>{STYLE}</style>
       {screen === "welcome" && (
-        <WelcomeScreen onStart={() => setScreen("setup")} />
+        <WelcomeScreen onStart={() => setScreen("home")} />
+      )}
+      {screen === "home" && (
+        <HomeScreen tier={tier}
+          savedDraftsCount={savedDrafts.length}
+          onDraft={() => setScreen('setup')}
+          onDFS={() => setScreen('dfs')}
+          onWorldCup={() => setScreen('worldcup')}
+          onPortfolio={() => setScreen('portfolio')}
+        />
       )}
       {screen === "setup" && (
         <SetupScreen mySlot={mySlot} setMySlot={setMySlot}
           platform={platform} setPlatform={setPlatform}
+          tier={tier}
+          onTierUnlock={(newTier, code) => { saveTier(newTier, code); setTier(newTier); }}
           onStart={(opts) => {
             const mode = opts?.draftMode || opts || 'full';
             const tgts = opts?.targets || [];
@@ -869,6 +944,9 @@ export default function App() {
             setScreen('draft');
           }}
           onBillyCatcher={() => setScreen('billy')}
+          onDFS={() => setScreen('dfs')}
+          onWorldCup={() => setScreen('worldcup')}
+          onHome={() => setScreen('home')}
           savedDraftsCount={savedDrafts.length}
           customRankings={customRankings}
           onImportRankings={handleImportRankings}
@@ -878,7 +956,7 @@ export default function App() {
         />
       )}
       {screen === "portfolio" && (
-        <PortfolioScreen savedDrafts={savedDrafts} onBack={() => setScreen('setup')} />
+        <PortfolioScreen savedDrafts={savedDrafts} onBack={() => setScreen('home')} />
       )}
       {screen === "billy" && (
         <BillyCatcherScreen
@@ -935,6 +1013,7 @@ export default function App() {
           customRankings={customRankings}
           targets={targets}
           platform={platform}
+          tier={tier}
           players={activePlayers}
           onLogMine={p => logPick(p, true)}
           onLogOpp={p => logPick(p, false)}
@@ -964,15 +1043,129 @@ export default function App() {
           }}
         />
       )}
+      {screen === "dfs" && (
+        <DFSScreen tier={tier} onBack={() => setScreen('home')} />
+      )}
+      {screen === "worldcup" && (
+        <WorldCupScreen tier={tier} onBack={() => setScreen('home')} />
+      )}
     </>
   );
 }
 
+// ── PRO CODE UNLOCK MODAL ─────────────────────────────────────────────────────
+function ProCodeModal({ onClose, onUnlock }) {
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(null);
+
+  const handleSubmit = async () => {
+    const trimmed = code.trim().toUpperCase();
+    if (!trimmed) return;
+    setLoading(true);
+    setError('');
+    try {
+      const result = await verifyCode(trimmed);
+      if (result.valid) {
+        setSuccess(result.tier);
+        setTimeout(() => { onUnlock(result.tier, trimmed); onClose(); }, 1500);
+      } else if (result.reason === 'device_limit') {
+        setError('This code has reached its device limit. Reply to your purchase email and we’ll reset it.');
+      } else {
+        setError('Code not found. Check your email for the exact code.');
+      }
+    } catch {
+      setError('Network error — try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position:'fixed', inset:0, zIndex:999,
+      background:'rgba(6,10,18,0.92)',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      padding:20,
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background:T.panel, border:`1px solid ${T.gold}55`,
+        borderRadius:16, padding:28, width:'100%', maxWidth:360,
+        animation:'slide-up 0.2s ease',
+      }}>
+        <div style={{
+          fontFamily:"'Barlow Condensed',sans-serif",
+          fontSize:22, fontWeight:900, color:T.gold, letterSpacing:1, marginBottom:4,
+        }}>ENTER PRO CODE</div>
+        <div style={{ fontSize:13, color:T.mute, marginBottom:20, lineHeight:1.5 }}>
+          You received this code by email after purchase.
+        </div>
+
+        {success ? (
+          <div style={{
+            background:`${T.green}22`, border:`1px solid ${T.green}55`,
+            borderRadius:10, padding:16, textAlign:'center',
+          }}>
+            <div style={{ fontSize:28, marginBottom:4 }}>✓</div>
+            <div style={{
+              fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:20, fontWeight:900, color:T.green,
+            }}>{success.toUpperCase()} UNLOCKED</div>
+          </div>
+        ) : (
+          <>
+            <input
+              autoFocus
+              value={code}
+              onChange={e => setCode(e.target.value.toUpperCase())}
+              onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+              placeholder="BBM-XXXX-XX"
+              style={{
+                width:'100%', padding:'14px 16px',
+                background:T.card, color:T.text,
+                border:`1px solid ${error ? T.red : T.border}`,
+                borderRadius:10, fontSize:18,
+                fontFamily:"'Share Tech Mono',monospace",
+                letterSpacing:3, outline:'none',
+                marginBottom: error ? 8 : 16,
+              }}
+            />
+            {error && (
+              <div style={{ color:T.red, fontSize:12, marginBottom:14 }}>{error}</div>
+            )}
+            <button
+              onClick={handleSubmit}
+              disabled={loading || !code.trim()}
+              style={{
+                width:'100%', padding:'14px',
+                background: code.trim() ? T.gold : `${T.gold}33`,
+                color: code.trim() ? T.bg : T.dim,
+                border:'none', borderRadius:10,
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:18, fontWeight:900, letterSpacing:1,
+                cursor: code.trim() ? 'pointer' : 'default',
+              }}
+            >{loading ? 'Checking…' : 'UNLOCK'}</button>
+            <button onClick={onClose} style={{
+              width:'100%', marginTop:10, padding:'8px',
+              background:'none', border:'none', color:T.dim,
+              fontFamily:"'Share Tech Mono',monospace",
+              fontSize:10, letterSpacing:1, cursor:'pointer',
+            }}>CANCEL</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── SETUP ─────────────────────────────────────────────────────────────────────
-function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBillyCatcher, savedDraftsCount, customRankings, onImportRankings, onClearRankings, onPortfolio, adpStatus }) {
+function SetupScreen({ mySlot, setMySlot, platform, setPlatform, tier, onTierUnlock, onStart, onBillyCatcher, onDFS, onWorldCup, onHome, savedDraftsCount, customRankings, onImportRankings, onClearRankings, onPortfolio, adpStatus }) {
   const [draftMode, setDraftMode] = useState('full');
   const [draftSpeed, setDraftSpeed] = useState(platform === 'dk' ? 30 : 20);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
+  const [showProModal, setShowProModal] = useState(false);
 
   useEffect(() => { setDraftSpeed(platform === 'dk' ? 30 : 20); }, [platform]);
 
@@ -1018,6 +1211,13 @@ function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBill
           marginBottom: 4,
         }}>
           <div>
+            {onHome && (
+              <button onClick={onHome} style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                fontFamily: "'Share Tech Mono',monospace", fontSize: 10,
+                color: T.dim, letterSpacing: 1, marginBottom: 8, display: 'block',
+              }}>← HOME</button>
+            )}
             <div style={{
               display: "inline-flex",
               alignItems: "center",
@@ -1031,16 +1231,35 @@ function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBill
                 fontFamily: "'Barlow Condensed', sans-serif",
                 fontSize: 14, fontWeight: 900, color: T.bg,
                 letterSpacing: 0.5,
-              }}>CP</div>
+              }}>PS.</div>
               <span style={{
                 fontFamily: "'Share Tech Mono', monospace",
                 fontSize: 11, color: T.gold, letterSpacing: 2, fontWeight: 700,
-              }}>COPILOT</span>
+              }}>PICKSETTER</span>
               <span style={{
                 fontFamily: "'Share Tech Mono', monospace",
                 fontSize: 9, color: T.dim, letterSpacing: 1,
                 border: `1px solid ${T.border}`, padding: "1px 6px", borderRadius: 10,
-              }}>BBM 2026</span>
+              }}>PickSetter 2026</span>
+              {/* Tier badge */}
+              {isPro(tier) ? (
+                <span style={{
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:9, letterSpacing:1,
+                  color: isElite(tier) ? T.purple : T.gold,
+                  background: isElite(tier) ? `${T.purple}22` : `${T.gold}22`,
+                  border: `1px solid ${isElite(tier) ? T.purple : T.gold}55`,
+                  padding:"1px 7px", borderRadius:10,
+                }}>{isElite(tier) ? 'ELITE' : 'PRO'}</span>
+              ) : (
+                <button onClick={() => setShowProModal(true)} style={{
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:9, letterSpacing:1,
+                  color:T.mute, background:'transparent',
+                  border:`1px solid ${T.border}`, padding:"1px 7px", borderRadius:10,
+                  cursor:'pointer',
+                }}>FREE · UPGRADE</button>
+              )}
             </div>
 
             <h1 style={{
@@ -1080,7 +1299,7 @@ function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBill
           maxWidth: 340,
         }}>
           Pick your platform and slot below, then open your Underdog draft
-          in another tab. Copilot tracks the board in real time —
+          in another tab. PickSetter tracks the board in real time —
           tier breaks, stack windows, and ranked pick recommendations every turn.
         </p>
         <div style={{
@@ -1090,6 +1309,79 @@ function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBill
       </div>
 
       <div style={{ padding: "20px 20px 40px", flex: 1, overflowY: "auto" }}>
+
+        {/* WORLD CUP '26 — live event banner (top placement during tournament) */}
+        <button onClick={onWorldCup} style={{
+          width:"100%", marginBottom:14, padding:"12px 16px",
+          background:`linear-gradient(90deg, ${T.blue}1C 0%, ${T.blue}08 100%)`,
+          border:`1px solid ${T.blue}55`, borderRadius:12, cursor:"pointer",
+          display:"flex", alignItems:"center", justifyContent:"space-between",
+          fontFamily:"'Barlow',sans-serif",
+        }}>
+          <div style={{display:"flex", alignItems:"center", gap:10}}>
+            <span style={{fontSize:18}}>⚽</span>
+            <div style={{textAlign:"left"}}>
+              <div style={{
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:15, fontWeight:900, color:T.blue, letterSpacing:0.5,
+                display:"flex", alignItems:"center", gap:6,
+              }}>
+                WORLD CUP &rsquo;26
+                <span style={{
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:8, color:T.green, letterSpacing:1,
+                  background:`${T.green}18`, border:`1px solid ${T.green}44`,
+                  padding:"1px 5px", borderRadius:4,
+                }}>● LIVE NOW</span>
+              </div>
+              <div style={{fontSize:10, color:T.mute, marginTop:1}}>
+                Live scores · group standings · fixtures
+              </div>
+            </div>
+          </div>
+          <span style={{color:T.blue, fontSize:18}}>→</span>
+        </button>
+
+        {/* DFS PICKSETTER — hero entry (top placement) */}
+        <button onClick={onDFS} style={{
+          width:"100%", marginBottom:14, padding:"18px",
+          background:`linear-gradient(135deg, ${T.teal}1E 0%, ${T.teal}06 70%)`,
+          border:`1px solid ${T.teal}66`, borderRadius:14, cursor:"pointer",
+          fontFamily:"'Barlow',sans-serif", textAlign:"left",
+          boxShadow:`0 4px 24px ${T.teal}14`,
+        }}>
+          <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10}}>
+            <div style={{display:"flex", alignItems:"center", gap:12}}>
+              <div style={{
+                width:44, height:44, borderRadius:10,
+                background:`${T.teal}22`, border:`1px solid ${T.teal}44`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:22,
+              }}>⚡</div>
+              <div>
+                <div style={{
+                  fontFamily:"'Barlow Condensed',sans-serif",
+                  fontSize:24, fontWeight:900, color:T.teal, letterSpacing:0.5,
+                  lineHeight:1,
+                }}>DFS PICKSETTER</div>
+                <div style={{fontSize:11, color:T.mute, marginTop:4}}>
+                  Daily lineup optimizer · DraftKings &amp; FanDuel
+                </div>
+              </div>
+            </div>
+            <span style={{color:T.teal, fontSize:22}}>→</span>
+          </div>
+          <div style={{display:"flex", flexWrap:"wrap", gap:6}}>
+            {["NFL · NBA · MLB","🔗 STACK MODE","⚠ INJURY ALERTS","📈 ROI TRACKER"].map(f => (
+              <span key={f} style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:8, letterSpacing:1, color:T.teal,
+                background:`${T.teal}14`, border:`1px solid ${T.teal}33`,
+                padding:"3px 7px", borderRadius:4,
+              }}>{f}</span>
+            ))}
+          </div>
+        </button>
 
         {/* PLATFORM SELECTOR */}
         <div style={{ marginBottom: 14 }}>
@@ -1403,6 +1695,72 @@ function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBill
         }}>
           ENTER DRAFT ROOM →
         </button>
+
+        {/* Upgrade / Pro Code section */}
+        {!isPro(tier) ? (
+          <div style={{
+            marginTop:16, padding:"18px 20px",
+            background:`${T.gold}0A`, border:`1px solid ${T.gold}33`,
+            borderRadius:12,
+          }}>
+            <div style={{
+              display:"flex", justifyContent:"space-between", alignItems:"center",
+              marginBottom:10,
+            }}>
+              <div style={{
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:16, fontWeight:900, color:T.gold, letterSpacing:1,
+              }}>UPGRADE TO PRO</div>
+              <div style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:11, color:T.gold,
+              }}>$79/yr</div>
+            </div>
+            <div style={{ fontSize:12, color:T.mute, lineHeight:1.7, marginBottom:14 }}>
+              Unlimited AI picks · Full portfolio analytics · Custom rankings · Roster export
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <a href="https://buy.stripe.com/3cIbJ3fFu4o45fJ72u8so00" target="_blank" rel="noreferrer" style={{
+                flex:1, display:"block", padding:"11px",
+                background:T.gold, color:T.bg,
+                border:"none", borderRadius:8, textDecoration:"none",
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:16, fontWeight:900, letterSpacing:1, textAlign:"center",
+                cursor:"pointer",
+              }}>BUY PRO — $79/yr</a>
+              <button onClick={() => setShowProModal(true)} style={{
+                padding:"11px 16px",
+                background:"transparent", color:T.mute,
+                border:`1px solid ${T.border}`, borderRadius:8,
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:10, letterSpacing:1, cursor:"pointer", whiteSpace:"nowrap",
+              }}>ENTER CODE</button>
+            </div>
+            <a href="https://buy.stripe.com/6oUbJ3lOE7Ag6jNaeG8so01" target="_blank" rel="noreferrer" style={{
+              display:"block", marginTop:8, padding:"9px",
+              background:"transparent", color:T.purple,
+              border:`1px solid ${T.purple}44`, borderRadius:8, textDecoration:"none",
+              fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:14, fontWeight:900, letterSpacing:1, textAlign:"center",
+              cursor:"pointer",
+            }}>ELITE — $199/yr (opponent modeling + early ADP)</a>
+          </div>
+        ) : (
+          <button onClick={() => setShowProModal(true)} style={{
+            marginTop:12, width:"100%", padding:"10px",
+            background:"transparent", color:T.dim,
+            border:`1px solid ${T.border}`, borderRadius:8,
+            fontFamily:"'Share Tech Mono',monospace",
+            fontSize:10, letterSpacing:1, cursor:"pointer",
+          }}>ENTER NEW CODE / SWITCH TIER</button>
+        )}
+
+        {showProModal && (
+          <ProCodeModal
+            onClose={() => setShowProModal(false)}
+            onUnlock={(newTier, code) => { onTierUnlock(newTier, code); setShowProModal(false); }}
+          />
+        )}
       </div>
     </div>
   );
@@ -1411,7 +1769,7 @@ function SetupScreen({ mySlot, setMySlot, platform, setPlatform, onStart, onBill
 // ── DRAFT SCREEN ──────────────────────────────────────────────────────────────
 function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoster,
   recs, drafted, flash, tierMap, scarcity, savedDrafts, customRankings,
-  platform, players, onLogMine, onLogOpp, onSkip, onDone, onReset }) {
+  platform, tier, players, onLogMine, onLogOpp, onSkip, onDone, onReset }) {
   const allPlayers = players || PLAYERS;
 
   const [search, setSearch] = useState("");
@@ -1484,6 +1842,17 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
   const rushingPos = Object.entries(scarcity)
     .filter(([_,r]) => r > 1.2)
     .sort((a,b) => b[1]-a[1]);
+
+  // Injury intel — flag serious statuses (Doubtful+) on my roster; Questionable
+  // is draft-season noise and stays off the strip to keep alerts meaningful.
+  const injMap = useInjuries();
+  const rosterInjuries = useMemo(() => {
+    if (!injMap) return [];
+    return myRoster
+      .map(p => injuryInfo(injMap, p.name))
+      .filter(inj => inj && inj.sev >= 2)
+      .sort((a, b) => b.sev - a.sev);
+  }, [injMap, myRoster]);
 
   return (
     <div style={{
@@ -1583,7 +1952,7 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
       </div>
 
       {/* ── BOARD INTEL STRIP ── */}
-      {(rushingPos.length > 0 || round >= 13) && (
+      {(rushingPos.length > 0 || round >= 13 || rosterInjuries.length > 0) && (
         <div style={{
           background: T.card, borderBottom:`1px solid ${T.border}`,
           padding:"6px 14px", display:"flex", gap:10, alignItems:"center",
@@ -1593,6 +1962,23 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
             fontFamily:"'Share Tech Mono',monospace",
             fontSize:9, color:T.dim, letterSpacing:1.5, flexShrink:0,
           }}>INTEL</span>
+          {rosterInjuries.map(inj => (
+            <div key={inj.name} style={{
+              display:"flex", alignItems:"center", gap:4,
+              padding:"3px 8px",
+              background:'#FF5C5C15', border:'1px solid #FF5C5C44',
+              borderRadius:4, flexShrink:0,
+            }}>
+              <span style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:9, fontWeight:700, color:'#FF5C5C', letterSpacing:0.5,
+              }}>⚠ {inj.tag}</span>
+              <span style={{
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:11, fontWeight:700, color:T.text,
+              }}>{inj.name}</span>
+            </div>
+          ))}
           {rushingPos.map(([pos,rate]) => (
             <div key={pos} style={{
               display:"flex", alignItems:"center", gap:4,
@@ -1743,12 +2129,22 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
                   )}
                   <div style={{ display:"flex", gap:5, alignItems:"center", marginBottom:4 }}>
                     <PosBadge pos={p.pos}/>
+                    {(() => {
+                      const inj = injuryInfo(injMap, p.name);
+                      return inj && inj.sev >= 2 ? (
+                        <span style={{
+                          fontFamily:"'Share Tech Mono',monospace",
+                          fontSize:7, fontWeight:700, color:'#FF5C5C', letterSpacing:0.5,
+                          background:'#FF5C5C18', padding:"1px 4px", borderRadius:2,
+                        }}>⚠ {inj.tag}</span>
+                      ) : null;
+                    })()}
                     {showTierAlert && (
                       <span style={{
                         fontFamily:"'Share Tech Mono',monospace",
                         fontSize:7, color:T.amber, letterSpacing:0.5,
                         background:`${T.amber}22`, padding:"1px 4px", borderRadius:2,
-                      }}>{tierInfo.tier === 1 ? `LAST ${p.pos}1` : `LAST T${tierInfo.tier}`}</span>
+                      }}>{tierInfo.tier === 1 ? `LAST ELITE ${p.pos}` : `LAST TIER ${tierInfo.tier}`}</span>
                     )}
                   </div>
                   <div style={{
@@ -1770,7 +2166,7 @@ function DraftScreen({ mySlot, currentPick, isMyTurn, isDone, available, myRoste
               myRoster={myRoster} drafted={drafted} available={available}
               currentPick={currentPick} mySlot={mySlot}
               scarcity={scarcity} tierMap={tierMap}
-              platform={platform}
+              platform={platform} tier={tier}
             />
           )}
         </div>
@@ -2038,11 +2434,21 @@ function PlayerRow({ player, isMyTurn, currentPick, tierInfo, reasons, onLogMine
 }
 
 // ── AI ADVISOR ────────────────────────────────────────────────────────────────
-function AiAdvisor({ myRoster, drafted, available, currentPick, mySlot, scarcity, tierMap, platform }) {
+function AiAdvisor({ myRoster, drafted, available, currentPick, mySlot, scarcity, tierMap, platform, tier }) {
   const [advice, setAdvice] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [loadMsg, setLoadMsg] = useState("Analyzing board state…");
+  // Free tier: 3 AI picks per day, persisted in localStorage so a page
+  // reload doesn't reset the meter (closes the refresh-to-bypass loophole).
+  const [sessionUses, setSessionUses] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('bbm_ai_uses') || 'null');
+      return raw && raw.d === new Date().toDateString() ? (raw.n || 0) : 0;
+    } catch { return 0; }
+  });
+  const FREE_LIMIT = 3;
+  const isAtLimit = !isPro(tier) && sessionUses >= FREE_LIMIT;
 
   const LOAD_MSGS = [
     "Analyzing board state…",
@@ -2063,6 +2469,12 @@ function AiAdvisor({ myRoster, drafted, available, currentPick, mySlot, scarcity
   }, [loading]);
 
   const getAdvice = async () => {
+    if (isAtLimit) return; // free tier cap reached
+    setSessionUses(u => {
+      const n = u + 1;
+      try { localStorage.setItem('bbm_ai_uses', JSON.stringify({ d: new Date().toDateString(), n })); } catch {}
+      return n;
+    });
     setLoading(true);
     setLoadMsg("Analyzing board state…");
     setAdvice(null);
@@ -2075,7 +2487,7 @@ function AiAdvisor({ myRoster, drafted, available, currentPick, mySlot, scarcity
 Pick 1: [Player Name] ([Team]) — [one sentence reason, max 12 words]
 Pick 2: [Player Name] ([Team]) — [one sentence reason, max 12 words]
 Pick 3: [Player Name] ([Team]) — [one sentence reason, max 12 words]
-⚠️ [One optional alert about positional scarcity, stacking opportunity, or portfolio risk — max 15 words. Omit if nothing urgent.]
+P.S. — [One sharp edge note: positional scarcity, stacking opportunity, or portfolio risk — max 15 words. Always end with this line.]
 
 Rules:
 - Always exactly 3 picks from the available players listed
@@ -2149,14 +2561,34 @@ Rules:
           fontFamily:"'Share Tech Mono',monospace",
           fontSize:9, color:T.purple, letterSpacing:2,
         }}>✦ AI ADVISOR</div>
-        <button onClick={getAdvice} disabled={loading} style={{
-          padding:"3px 8px", background:"transparent",
-          color: loading ? T.dim : T.purple,
-          border:`1px solid ${loading ? T.border : T.purple}66`,
-          borderRadius:4, fontFamily:"'Share Tech Mono',monospace",
-          fontSize:9, letterSpacing:1, cursor:loading?"default":"pointer",
-        }}>{loading ? "THINKING…" : "REFRESH"}</button>
+        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+          {!isPro(tier) && (
+            <span style={{
+              fontFamily:"'Share Tech Mono',monospace", fontSize:8,
+              color: isAtLimit ? T.red : T.dim, letterSpacing:0.5,
+            }}>{sessionUses}/{FREE_LIMIT} free</span>
+          )}
+          <button onClick={getAdvice} disabled={loading || isAtLimit} style={{
+            padding:"3px 8px", background:"transparent",
+            color: (loading || isAtLimit) ? T.dim : T.purple,
+            border:`1px solid ${(loading || isAtLimit) ? T.border : T.purple}66`,
+            borderRadius:4, fontFamily:"'Share Tech Mono',monospace",
+            fontSize:9, letterSpacing:1, cursor:(loading||isAtLimit)?"default":"pointer",
+          }}>{loading ? "THINKING…" : isAtLimit ? "LIMIT REACHED" : "REFRESH"}</button>
+        </div>
       </div>
+
+      {isAtLimit && (
+        <div style={{
+          background:`${T.gold}12`, border:`1px solid ${T.gold}33`,
+          borderRadius:6, padding:"10px 12px", marginBottom:8,
+          fontSize:12, color:T.mute, lineHeight:1.6,
+        }}>
+          <span style={{ color:T.gold, fontWeight:700 }}>Free tier: 3 AI picks per draft.</span>
+          {" "}Upgrade to Pro for unlimited AI advice all season.{" "}
+          <span style={{ color:T.gold, cursor:"pointer", textDecoration:"underline" }}>Tap UPGRADE FREE → PRO on the setup screen.</span>
+        </div>
+      )}
 
       {loading && (
         <div style={{ display:"flex", gap:6, alignItems:"center", padding:"8px 0" }}>
@@ -2187,7 +2619,8 @@ Rules:
             <p key={i} style={{
               margin:"0 0 6px",
               paddingLeft: line.match(/^[123]\./) ? 0 : 0,
-              color: i === 0 ? T.text : T.mute,
+              color: line.startsWith("P.S.") ? T.gold : i === 0 ? T.text : T.mute,
+              fontWeight: line.startsWith("P.S.") ? 600 : 400,
             }}>{line}</p>
           ))}
         </div>
@@ -2367,8 +2800,10 @@ function RecapScreen({ myRoster, drafted, mySlot, onReset, queueEntry, onQueueDo
           ))}
         </div>
 
+        <EmailCapture source="recap" />
+
         <button onClick={async () => {
-          const text = `BBM Copilot — Slot ${mySlot}\n` +
+          const text = `PickSetter — Slot ${mySlot}\n` +
             myDraftedWithPick.map(p => `${p.pick < 999 ? pickToRound(p.pick) : '—'} ${p.pos} ${p.name} ${p.team}`).join('\n');
           try {
             await navigator.clipboard.writeText(text);
@@ -2417,6 +2852,82 @@ function RecapScreen({ myRoster, drafted, mySlot, onReset, queueEntry, onQueueDo
           }}>+ LOG NEW DRAFT</button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── EMAIL CAPTURE (Monetization Playbook — Touchpoint 1: post-draft Recap) ────
+function EmailCapture({ source }) {
+  const [email, setEmail] = useState('');
+  const [state, setState] = useState(() => {
+    try { return localStorage.getItem('ps_email_capture') ? 'done' : 'idle'; } catch { return 'idle'; }
+  });
+
+  if (state === 'done') return null;
+
+  const submit = async () => {
+    const v = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) { setState('invalid'); return; }
+    setState('sending');
+    try {
+      const r = await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: v, source }),
+      });
+      if (!r.ok) throw new Error();
+      try { localStorage.setItem('ps_email_capture', v); } catch {}
+      setState('thanks');
+      setTimeout(() => setState('done'), 2500);
+    } catch {
+      setState('error');
+    }
+  };
+
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, rgba(255,209,102,0.08), rgba(255,209,102,0.02))`,
+      border: `1px solid ${T.gold}33`, borderRadius: 10,
+      padding: 14, marginBottom: 16,
+    }}>
+      {state === 'thanks' ? (
+        <div style={{
+          fontFamily: "'Barlow Condensed', sans-serif", textAlign: 'center',
+          fontSize: 16, fontWeight: 700, color: T.gold, padding: '6px 0',
+        }}>✓ YOU'RE ON THE LIST — EARLY-BIRD PRICING LOCKED</div>
+      ) : (
+        <>
+          <div style={{
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: 15, fontWeight: 900, letterSpacing: 0.5, color: T.text, marginBottom: 2,
+          }}>WANT THIS EDGE ALL SEASON?</div>
+          <div style={{ fontSize: 11, color: T.dim, marginBottom: 10 }}>
+            Pro launches before draft season peaks. Early list gets launch pricing — free tier stays free.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="email" value={email} placeholder="you@email.com"
+              onChange={e => { setEmail(e.target.value); if (state === 'invalid' || state === 'error') setState('idle'); }}
+              onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+              style={{
+                flex: 1, padding: '10px 12px', background: T.bg,
+                border: `1px solid ${state === 'invalid' ? T.red : T.border}`,
+                borderRadius: 8, color: T.text, fontSize: 13, outline: 'none',
+                fontFamily: "'Barlow', sans-serif",
+              }}
+            />
+            <button onClick={submit} disabled={state === 'sending'} style={{
+              padding: '10px 16px', background: T.gold, color: T.bg,
+              border: 'none', borderRadius: 8, cursor: 'pointer',
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: 14, fontWeight: 900, letterSpacing: 1,
+              opacity: state === 'sending' ? 0.6 : 1,
+            }}>{state === 'sending' ? '…' : 'NOTIFY ME'}</button>
+          </div>
+          {state === 'invalid' && <div style={{ fontSize: 10, color: T.red, marginTop: 6 }}>Enter a valid email</div>}
+          {state === 'error' && <div style={{ fontSize: 10, color: T.red, marginTop: 6 }}>Something hiccuped — try again</div>}
+        </>
+      )}
     </div>
   );
 }
@@ -2481,14 +2992,14 @@ function OpponentIntel({ mySlot, myRoster, drafted, currentPick }) {
               background: T.card,
               border: `1px solid ${sharedQB.length > 0 ? T.red + "44" : T.border}`,
               borderRadius: 6, padding: 10,
-              borderTop: `2px solid ${label==="LEFT" ? T.blue : T.purple}`,
+              borderTop: `2px solid ${T.slate}`,
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                 <div>
                   <div style={{
                     fontFamily: "'Barlow Condensed',sans-serif",
                     fontSize: 10, fontWeight: 900,
-                    color: label==="LEFT" ? T.blue : T.purple,
+                    color: T.slate,
                     letterSpacing: 1.5,
                   }}>{label} · S{slot}</div>
                   <div style={{
@@ -2807,7 +3318,7 @@ function ComboWarningModal({ player, combo, onConfirm, onCancel }) {
 }
 
 // ── BOOKMARKLET INSTALLER ─────────────────────────────────────────────────────
-const BM_CODE = `javascript:(function(){var s=window.getSelection().toString().trim()||document.activeElement?.innerText?.trim()||'';if(!s||s.length<2){alert('Select a player name on Underdog first, then click this bookmark.');return;}navigator.clipboard.writeText(s).then(function(){var e=document.createElement('div');e.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:99999;background:gold;color:black;padding:10px 18px;border-radius:8px;font:bold 14px/1.4 sans-serif;box-shadow:0 4px 20px rgba(0,0,0,0.5);white-space:nowrap';e.textContent='Copied: '+s.slice(0,28)+' \u2014 switch to COPILOT';document.body.appendChild(e);setTimeout(function(){e.remove()},2500);}).catch(function(){prompt('Copy this manually:',s);});})();`;
+const BM_CODE = `javascript:(function(){var s=window.getSelection().toString().trim()||document.activeElement?.innerText?.trim()||'';if(!s||s.length<2){alert('Select a player name on Underdog first, then click this bookmark.');return;}navigator.clipboard.writeText(s).then(function(){var e=document.createElement('div');e.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:99999;background:gold;color:black;padding:10px 18px;border-radius:8px;font:bold 14px/1.4 sans-serif;box-shadow:0 4px 20px rgba(0,0,0,0.5);white-space:nowrap';e.textContent='Copied: '+s.slice(0,28)+' \u2014 switch to PICKSETTER';document.body.appendChild(e);setTimeout(function(){e.remove()},2500);}).catch(function(){prompt('Copy this manually:',s);});})();`;
 
 function BookmarkletInstaller() {
   const [open, setOpen] = useState(false);
@@ -2869,7 +3380,7 @@ function BookmarkletInstaller() {
               }}
               draggable
             >
-              📋 COPILOT PASTE
+              📋 PICKSETTER PASTE
             </a>
             <div style={{
               fontSize: 11, color: T.mute, marginTop: 8, lineHeight: 1.6,
@@ -2890,10 +3401,10 @@ function BookmarkletInstaller() {
             }}>HOW TO USE (every pick)</div>
             {[
               ["1", "On Underdog, when a pick is made — select the player's name (double-tap or click)"],
-              ["2", "Click the 📋 COPILOT PASTE bookmark in your bar"],
+              ["2", "Click the 📋 PICKSETTER PASTE bookmark in your bar"],
               ["3", "Gold flash confirms it copied — switch to this tab"],
               ["4", "Tap 📋 PASTE in the top bar — match appears instantly"],
-              ["5", "Tap MY PICK or OPP PICK — done"],
+              ["5", "Tap MY PICK or THEIR PICK — done"],
             ].map(([n, t]) => (
               <div key={n} style={{ display:"flex", gap:10, marginBottom:6, alignItems:"flex-start" }}>
                 <span style={{
@@ -3061,7 +3572,7 @@ function PastePickModal({ match, rawText, needsInput, pasteInput, onInputChange,
                 fontSize: 17, fontWeight: 900, letterSpacing: 0.5,
                 cursor: "pointer",
               }}>
-                ↑ OPP PICK
+                ↑ THEIR PICK
               </button>
             </div>
             <button onClick={onClose} style={{
@@ -3304,7 +3815,7 @@ function FastDraftScreen({ mySlot, currentPick, isMyTurn, isDone,
                 border:`1px solid ${T.border}`, borderRadius:8,
                 fontFamily:"'Barlow Condensed',sans-serif",
                 fontSize:17, fontWeight:900, cursor:"pointer",
-              }}>↑ OPP</button>
+              }}>↑ THEIR PICK</button>
             </div>
             <button onClick={()=>setVoiceResult(null)} style={{
               width:"100%", marginTop:8, padding:"7px",
@@ -4602,11 +5113,1783 @@ function BillyCatcherScreen({ queue, setQueue, billyCount, setBillyCount, myCoun
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// DFS PICKSETTER SCREEN — Daily Fantasy lineup optimizer
+// ═══════════════════════════════════════════════════════════════════════════
+
+// DraftKings NFL slate structure (salary cap: $50,000)
+// Positions: QB, RB, RB, WR, WR, WR, TE, FLEX (RB/WR/TE), DST
+const DK_POSITIONS = ['QB','RB','RB','WR','WR','WR','TE','FLEX','DST'];
+const DK_SALARY_CAP = 50000;
+
+// FanDuel NFL slate structure (salary cap: $60,000)
+// Positions: QB, RB, RB, WR, WR, WR, TE, FLEX (RB/WR/TE), DST (K on FD but simplified)
+const FD_POSITIONS = ['QB','RB','RB','WR','WR','WR','TE','FLEX','DST'];
+const FD_SALARY_CAP = 60000;
+
+// Sample DFS player pool (Week 1 2026 — NFL)
+// Real implementation would fetch from /api/dfs-slate
+const DFS_SAMPLE_POOL = [
+  // QBs
+  { id:'dfs1', name:"Josh Allen", pos:'QB', team:'BUF', sal_dk:8200, sal_fd:9500, proj:28.4, own_pct:22, injury:null },
+  { id:'dfs2', name:"Lamar Jackson", pos:'QB', team:'BAL', sal_dk:8000, sal_fd:9200, proj:27.1, own_pct:18, injury:null },
+  { id:'dfs3', name:"Jalen Hurts", pos:'QB', team:'PHI', sal_dk:7800, sal_fd:9000, proj:26.5, own_pct:15, injury:null },
+  { id:'dfs4', name:"Jayden Daniels", pos:'QB', team:'WAS', sal_dk:7400, sal_fd:8600, proj:24.8, own_pct:11, injury:null },
+  { id:'dfs5', name:"Josh Allen", pos:'QB', team:'BUF', sal_dk:7200, sal_fd:8400, proj:23.5, own_pct:9, injury:null },
+  { id:'dfs6', name:"Jordan Love", pos:'QB', team:'GB', sal_dk:7000, sal_fd:8200, proj:22.1, own_pct:7, injury:null },
+  { id:'dfs7', name:"Bo Nix", pos:'QB', team:'DEN', sal_dk:6600, sal_fd:7800, proj:20.5, own_pct:5, injury:null },
+  // RBs
+  { id:'dfs10', name:"Saquon Barkley", pos:'RB', team:'PHI', sal_dk:8600, sal_fd:9800, proj:24.2, own_pct:28, injury:null },
+  { id:'dfs11', name:"Bijan Robinson", pos:'RB', team:'ATL', sal_dk:8200, sal_fd:9400, proj:22.8, own_pct:24, injury:null },
+  { id:'dfs12', name:"Jahmyr Gibbs", pos:'RB', team:'DET', sal_dk:7800, sal_fd:9000, proj:21.5, own_pct:20, injury:null },
+  { id:'dfs13', name:"De'Von Achane", pos:'RB', team:'MIA', sal_dk:7400, sal_fd:8600, proj:20.1, own_pct:17, injury:null },
+  { id:'dfs14', name:"Derrick Henry", pos:'RB', team:'BAL', sal_dk:7000, sal_fd:8200, proj:19.2, own_pct:14, injury:null },
+  { id:'dfs15', name:"Josh Jacobs", pos:'RB', team:'GB', sal_dk:6800, sal_fd:7800, proj:18.1, own_pct:12, injury:null },
+  { id:'dfs16', name:"Bucky Irving", pos:'RB', team:'TB', sal_dk:6400, sal_fd:7400, proj:16.8, own_pct:10, injury:null },
+  { id:'dfs17', name:"Chase Brown", pos:'RB', team:'CIN', sal_dk:6000, sal_fd:7000, proj:15.5, own_pct:8, injury:null },
+  { id:'dfs18', name:"Kenneth Walker", pos:'RB', team:'SEA', sal_dk:5800, sal_fd:6800, proj:14.2, own_pct:7, injury:null },
+  { id:'dfs19', name:"Kaleb Johnson", pos:'RB', team:'SEA', sal_dk:5400, sal_fd:6200, proj:13.1, own_pct:5, injury:null },
+  // WRs
+  { id:'dfs20', name:"Ja'Marr Chase", pos:'WR', team:'CIN', sal_dk:8800, sal_fd:9800, proj:26.5, own_pct:30, injury:null },
+  { id:'dfs21', name:"Justin Jefferson", pos:'WR', team:'MIN', sal_dk:8400, sal_fd:9400, proj:24.8, own_pct:26, injury:null },
+  { id:'dfs22', name:"CeeDee Lamb", pos:'WR', team:'DAL', sal_dk:8000, sal_fd:9000, proj:23.2, own_pct:22, injury:null },
+  { id:'dfs23', name:"Malik Nabers", pos:'WR', team:'NYG', sal_dk:7600, sal_fd:8600, proj:21.8, own_pct:18, injury:null },
+  { id:'dfs24', name:"Amon-Ra St. Brown", pos:'WR', team:'DET', sal_dk:7200, sal_fd:8200, proj:20.4, own_pct:15, injury:null },
+  { id:'dfs25', name:"Puka Nacua", pos:'WR', team:'LAR', sal_dk:6800, sal_fd:7800, proj:18.9, own_pct:13, injury:null },
+  { id:'dfs26', name:"Khalil Shakir", pos:'WR', team:'BUF', sal_dk:6400, sal_fd:7400, proj:17.5, own_pct:11, injury:null },
+  { id:'dfs27', name:"Ladd McConkey", pos:'WR', team:'LAC', sal_dk:6200, sal_fd:7000, proj:16.2, own_pct:9, injury:null },
+  { id:'dfs28', name:"Rashee Rice", pos:'WR', team:'KC', sal_dk:5800, sal_fd:6800, proj:15.1, own_pct:7, injury:null },
+  { id:'dfs29', name:"Rome Odunze", pos:'WR', team:'CHI', sal_dk:5600, sal_fd:6400, proj:14.0, own_pct:6, injury:null },
+  { id:'dfs30', name:"Terry McLaurin", pos:'WR', team:'WAS', sal_dk:5400, sal_fd:6200, proj:13.2, own_pct:5, injury:null },
+  // TEs
+  { id:'dfs40', name:"Brock Bowers", pos:'TE', team:'LV', sal_dk:6800, sal_fd:7800, proj:18.5, own_pct:22, injury:null },
+  { id:'dfs41', name:"Trey McBride", pos:'TE', team:'ARI', sal_dk:6200, sal_fd:7200, proj:16.2, own_pct:17, injury:null },
+  { id:'dfs42', name:"Sam LaPorta", pos:'TE', team:'DET', sal_dk:5800, sal_fd:6800, proj:14.8, own_pct:13, injury:null },
+  { id:'dfs43', name:"George Kittle", pos:'TE', team:'SF', sal_dk:5400, sal_fd:6400, proj:13.5, own_pct:10, injury:null },
+  { id:'dfs44', name:"Tyler Warren", pos:'TE', team:'IND', sal_dk:5000, sal_fd:6000, proj:12.1, own_pct:7, injury:null },
+  // DST
+  { id:'dfs50', name:"Buffalo Bills", pos:'DST', team:'BUF', sal_dk:4200, sal_fd:5000, proj:11.5, own_pct:18, injury:null },
+  { id:'dfs51', name:"San Francisco 49ers", pos:'DST', team:'SF', sal_dk:4000, sal_fd:4800, proj:10.8, own_pct:14, injury:null },
+  { id:'dfs52', name:"Philadelphia Eagles", pos:'DST', team:'PHI', sal_dk:3800, sal_fd:4600, proj:10.2, own_pct:11, injury:null },
+  { id:'dfs53', name:"Kansas City Chiefs", pos:'DST', team:'KC', sal_dk:3600, sal_fd:4200, proj:9.5, own_pct:8, injury:null },
+  { id:'dfs54', name:"Dallas Cowboys", pos:'DST', team:'DAL', sal_dk:3400, sal_fd:4000, proj:9.0, own_pct:6, injury:null },
+];
+
+// Greedy knapsack optimizer: maximize projected points within salary cap
+// Returns the best lineup for the given platform
+function optimizeLineup(pool, platform) {
+  const cap = platform === 'fd' ? FD_SALARY_CAP : DK_SALARY_CAP;
+  const salKey = platform === 'fd' ? 'sal_fd' : 'sal_dk';
+
+  // Required slots (simplified): QB(1) RB(2) WR(3) TE(1) FLEX(1) DST(1)
+  const result = {};
+  let remaining = cap;
+
+  // Pick best at each required position, then fill FLEX
+  const slots = [
+    { slot:'QB',   pos:['QB'],          count:1 },
+    { slot:'RB1',  pos:['RB'],          count:1 },
+    { slot:'RB2',  pos:['RB'],          count:1 },
+    { slot:'WR1',  pos:['WR'],          count:1 },
+    { slot:'WR2',  pos:['WR'],          count:1 },
+    { slot:'WR3',  pos:['WR'],          count:1 },
+    { slot:'TE',   pos:['TE'],          count:1 },
+    { slot:'FLEX', pos:['RB','WR','TE'],count:1 },
+    { slot:'DST',  pos:['DST'],         count:1 },
+  ];
+
+  const used = new Set();
+
+  for (const { slot, pos } of slots) {
+    // How many slots remain after this one?
+    const slotsLeft = slots.length - Object.keys(result).length - 1;
+    // Reserve budget: estimate min cost for remaining slots
+    const minCostPerSlot = 3400; // conservative floor
+    const budget = remaining - (slotsLeft * minCostPerSlot);
+
+    const candidates = pool
+      .filter(p => pos.includes(p.pos) && !used.has(p.id) && p[salKey] <= budget)
+      .sort((a, b) => (b.proj / b[salKey]) - (a.proj / a[salKey])); // value sort
+
+    if (candidates.length === 0) continue;
+    const pick = candidates[0];
+    result[slot] = pick;
+    used.add(pick.id);
+    remaining -= pick[salKey];
+  }
+
+  const players = Object.values(result).filter(Boolean);
+  const totalSal = players.reduce((s, p) => s + p[platform === 'fd' ? 'sal_fd' : 'sal_dk'], 0);
+  const totalProj = players.reduce((s, p) => s + p.proj, 0);
+
+  return { lineup: result, players, totalSal, totalProj, remaining: cap - totalSal };
+}
+
+// Ownership color: low = green (contrarian), high = red (chalk)
+function ownershipColor(pct) {
+  if (pct >= 25) return T.red;
+  if (pct >= 15) return T.amber;
+  return T.green;
+}
+
+// Leverage score: 1-10, higher = more contrarian vs. field
+function leverageScore(players) {
+  const avgOwn = players.reduce((s, p) => s + (p.own_pct || 15), 0) / Math.max(players.length, 1);
+  // Low ownership = high leverage
+  return Math.max(1, Math.min(10, Math.round(10 - avgOwn / 4)));
+}
+
+// ── DFS free-tier gate: 3 lineup generations per day ─────────────────────────
+const FREE_DFS_LIMIT = 3;
+function getDfsUsesToday() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('ps_dfs_uses') || 'null');
+    return raw && raw.d === new Date().toDateString() ? (raw.n || 0) : 0;
+  } catch { return 0; }
+}
+function bumpDfsUses() {
+  const n = getDfsUsesToday() + 1;
+  try { localStorage.setItem('ps_dfs_uses', JSON.stringify({ d: new Date().toDateString(), n })); } catch {}
+  return n;
+}
+
+// ── DFS ROI tracker + streak system (localStorage ps_dfs_results) ────────────
+function dfsDateKey(d) {
+  const dt = d || new Date();
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+function loadDfsResults() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('ps_dfs_results') || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch { return []; }
+}
+function saveDfsResults(results) {
+  try { localStorage.setItem('ps_dfs_results', JSON.stringify(results)); } catch {}
+}
+// Delete-tombstones { id: deletedAtMs } — synced so a delete on one device
+// propagates instead of being resurrected by another device's merge.
+const DFS_TOMBSTONE_TTL = 90 * 24 * 3600 * 1000;
+function loadDfsDeleted() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('ps_dfs_deleted') || '{}');
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const now = Date.now();
+    const out = {};
+    Object.entries(raw).forEach(([id, ts]) => {
+      if (typeof ts === 'number' && now - ts < DFS_TOMBSTONE_TTL) out[id] = ts;
+    });
+    return out;
+  } catch { return {}; }
+}
+function saveDfsDeleted(map) {
+  try { localStorage.setItem('ps_dfs_deleted', JSON.stringify(map)); } catch {}
+}
+// Pro/Elite sync by license code (stable across devices); free falls back to
+// the per-browser device id (backup/restore only).
+function dfsSyncIdentity() {
+  let code = null;
+  try { code = localStorage.getItem(TIER_CODE_KEY); } catch {}
+  return { device: getDeviceId(), code: code || undefined };
+}
+// Consecutive calendar days (ending today or yesterday) with at least one logged result
+function dfsStreak(results) {
+  const days = new Set(results.map(r => r.date));
+  if (!days.size) return 0;
+  const DAY = 86400000;
+  let cur = new Date();
+  if (!days.has(dfsDateKey(cur))) cur = new Date(cur.getTime() - DAY);
+  let streak = 0;
+  while (days.has(dfsDateKey(cur))) { streak++; cur = new Date(cur.getTime() - DAY); }
+  return streak;
+}
+// ── Injury alerts (Sleeper via /api/injuries) ────────────────────────────────
+const INJ_BADGE = {
+  'Questionable': { tag: 'Q',   sev: 1 },
+  'Doubtful':     { tag: 'D',   sev: 2 },
+  'Out':          { tag: 'OUT', sev: 3 },
+  'IR':           { tag: 'IR',  sev: 3 },
+  'PUP':          { tag: 'PUP', sev: 3 },
+  'Sus':          { tag: 'SUS', sev: 3 },
+  'NA':           { tag: 'NA',  sev: 2 },
+  'DNR':          { tag: 'DNR', sev: 3 },
+};
+function injuryInfo(injMap, playerName) {
+  if (!injMap) return null;
+  const hit = injMap[projNameKey(playerName || '')];
+  if (!hit) return null;
+  const badge = INJ_BADGE[hit.status] || { tag: hit.status.slice(0, 3).toUpperCase(), sev: 2 };
+  return { ...hit, ...badge };
+}
+// Shared hook — fetches the (edge-cached) injury map once per mount.
+function useInjuries() {
+  const [injMap, setInjMap] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    fetch('/api/injuries')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (!dead && d && d.players) setInjMap(d.players); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, []);
+  return injMap;
+}
+
+function dfsStats(results) {
+  const n = results.length;
+  if (!n) return { n: 0, cashes: 0, cashPct: 0, fees: 0, won: 0, profit: 0, roi: 0, streak: 0, series: [] };
+  let fees = 0, won = 0, cashes = 0;
+  const sorted = [...results].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.id || 0) - (b.id || 0));
+  let cum = 0;
+  const series = sorted.map(r => {
+    fees += r.fee; won += r.won;
+    if (r.won > 0) cashes++;
+    cum += r.won - r.fee;
+    return cum;
+  });
+  return {
+    n, cashes,
+    cashPct: Math.round((cashes / n) * 100),
+    fees, won,
+    profit: won - fees,
+    roi: fees > 0 ? Math.round(((won - fees) / fees) * 100) : 0,
+    streak: dfsStreak(results),
+    series,
+  };
+}
+
+// ── DFS salary CSV import (DraftKings + FanDuel lobby exports) ────────────────
+function splitDfsCsvLine(line) {
+  const out = []; let cur = '', q = false;
+  for (const ch of line) {
+    if (ch === '"') { q = !q; continue; }
+    if (ch === ',' && !q) { out.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+// Detects DK ("AvgPointsPerGame") vs FD ("FPPG"/"Nickname") salary exports.
+// Returns { platform, players } or null if unrecognized.
+function parseDfsCsv(raw) {
+  const lines = (raw || '').trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 3) return null;
+  const headerLower = lines[0].toLowerCase();
+  const isDK = headerLower.includes('avgpointspergame') || (headerLower.includes('roster position') && headerLower.includes('salary'));
+  const isFD = !isDK && (headerLower.includes('fppg') || headerLower.includes('nickname'));
+  if (!isDK && !isFD) return null;
+  const cols = splitDfsCsvLine(lines[0]).map(c => c.toLowerCase());
+  const idx = (n) => cols.indexOf(n);
+  const players = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = splitDfsCsvLine(lines[i]);
+    if (c.length < 4) continue;
+    let name, pos, team, sal, proj;
+    if (isDK) {
+      name = c[idx('name')] || '';
+      pos = (c[idx('position')] || '').toUpperCase();
+      team = (c[idx('teamabbrev')] || '').toUpperCase();
+      sal = parseFloat(c[idx('salary')]);
+      proj = parseFloat(c[idx('avgpointspergame')]) || 0;
+    } else {
+      name = c[idx('nickname')] || ((c[idx('first name')] || '') + ' ' + (c[idx('last name')] || '')).trim();
+      pos = (c[idx('position')] || '').toUpperCase();
+      team = (c[idx('team')] || '').toUpperCase();
+      sal = parseFloat(c[idx('salary')]);
+      proj = parseFloat(c[idx('fppg')]) || 0;
+    }
+    pos = pos.split('/')[0].trim();
+    if (pos === 'D' || pos === 'DEF') pos = 'DST';
+    if (!name || isNaN(sal) || sal <= 0) continue;
+    players.push({
+      id: 'csv' + i, name, pos, team: team || 'FA',
+      sal_dk: sal, sal_fd: sal,
+      proj: Math.round(proj * 10) / 10,
+      own_pct: null, injury: null,
+    });
+  }
+  return players.length >= 20 ? { platform: isDK ? 'dk' : 'fd', players } : null;
+}
+
+// Upgrade pass: spend leftover cap — swap each slot up to the highest-projection
+// affordable player until no upgrade exists. Fixes the greedy value-sort leaving
+// salary on the table.
+function improveLineup(res, pool, platform) {
+  const salKey = platform === 'fd' ? 'sal_fd' : 'sal_dk';
+  const cap = platform === 'fd' ? FD_SALARY_CAP : DK_SALARY_CAP;
+  const elig = { QB:['QB'], RB1:['RB'], RB2:['RB'], WR1:['WR'], WR2:['WR'], WR3:['WR'], TE:['TE'], FLEX:['RB','WR','TE'], DST:['DST'] };
+  let improved = true, guard = 0;
+  while (improved && guard++ < 25) {
+    improved = false;
+    const used = new Set(Object.values(res.lineup).filter(Boolean).map(p => p.id));
+    const totalSal = Object.values(res.lineup).filter(Boolean).reduce((s, p) => s + p[salKey], 0);
+    const room = cap - totalSal;
+    for (const [slot, cur] of Object.entries(res.lineup)) {
+      if (!cur || !elig[slot]) continue;
+      const cands = pool.filter(p =>
+        elig[slot].includes(p.pos) && !used.has(p.id) &&
+        p[salKey] <= cur[salKey] + room && p.proj > cur.proj
+      );
+      if (cands.length) {
+        res.lineup[slot] = cands.sort((a, b) => b.proj - a.proj)[0];
+        improved = true;
+        break;
+      }
+    }
+  }
+  res.players = Object.values(res.lineup).filter(Boolean);
+  res.totalSal = res.players.reduce((s, p) => s + p[salKey], 0);
+  return res;
+}
+
+// ── Projections / ownership import (ETR, RotoGrinders, any CSV) ──────────────
+// Accepts any CSV with a player-name column plus projection and/or ownership
+// columns. Returns { key → { proj?, own? } } or null if unrecognized.
+function projNameKey(name) {
+  return name.toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+(jr|sr|ii|iii|iv|v)$/, '').replace(/\s+/g, ' ').trim();
+}
+function parseProjectionsCsv(raw) {
+  const lines = (raw || '').trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 3) return null;
+  const header = splitDfsCsvLine(lines[0]).map(h => h.toLowerCase().trim());
+  const nameIdx = header.findIndex(h => /^(player|name|player name|nickname)$/.test(h));
+  const projIdx = header.findIndex(h => /proj|fpts|fantasy points|median|fc pts/.test(h));
+  const ownIdx  = header.findIndex(h => /own|roster%/.test(h));
+  if (nameIdx < 0 || (projIdx < 0 && ownIdx < 0)) return null;
+  const map = {};
+  for (let i = 1; i < lines.length; i++) {
+    const c = splitDfsCsvLine(lines[i]);
+    const name = (c[nameIdx] || '').trim();
+    if (!name) continue;
+    const entry = {};
+    if (projIdx >= 0) { const v = parseFloat(c[projIdx]); if (!isNaN(v)) entry.proj = Math.round(v * 10) / 10; }
+    if (ownIdx >= 0) { const v = parseFloat(String(c[ownIdx] || '').replace('%', '')); if (!isNaN(v)) entry.own = Math.round(v * 10) / 10; }
+    if (entry.proj != null || entry.own != null) map[projNameKey(name)] = entry;
+  }
+  return Object.keys(map).length >= 10 ? map : null;
+}
+
+// Overlay imported projections/ownership onto a salary pool by name match.
+function applyProjections(pool, projMap) {
+  if (!projMap) return { pool, matched: 0 };
+  let matched = 0;
+  const out = pool.map(p => {
+    const e = projMap[projNameKey(p.name)];
+    if (!e) return p;
+    matched++;
+    return {
+      ...p,
+      proj: e.proj != null ? e.proj : p.proj,
+      own_pct: e.own != null ? e.own : p.own_pct,
+    };
+  });
+  return { pool: out, matched };
+}
+
+// ── Multi-lineup generation with variance ─────────────────────────────────────
+// Usage penalty diversifies player selection across lineups (GPP multi-entry).
+function generateLineups(pool, platform, n) {
+  const usage = {};
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const adjusted = pool.map(p => ({
+      ...p,
+      _realProj: p.proj,
+      proj: p.proj * (1 - 0.15 * (usage[p.id] || 0)) * (i === 0 ? 1 : (0.94 + Math.random() * 0.12)),
+    }));
+    const res = optimizeLineup(adjusted, platform);
+    if (!res.players.length) break;
+    improveLineup(res, adjusted, platform);
+    const restore = (p) => ({ ...p, proj: p._realProj });
+    const players = res.players.map(restore);
+    const lineupObj = {};
+    Object.entries(res.lineup).forEach(([slot, p]) => { if (p) lineupObj[slot] = restore(p); });
+    const totalProj = players.reduce((s, p) => s + p.proj, 0);
+    out.push({ ...res, lineup: lineupObj, players, totalProj });
+    players.forEach(p => { usage[p.id] = (usage[p.id] || 0) + 1; });
+  }
+  return out;
+}
+
+// ── Stack builder: QB + pass-catcher correlation ─────────────────────────────
+function detectStack(players) {
+  const qb = players.find(p => p.pos === 'QB');
+  if (!qb) return null;
+  const mates = players.filter(p => p.id !== qb.id && p.team === qb.team && (p.pos === 'WR' || p.pos === 'TE'));
+  return { qb, mates, stacked: mates.length > 0 };
+}
+// If the lineup has no QB stack, swap the weakest WR/TE for the best same-team
+// pass catcher that fits under the cap. Returns the (possibly) updated lineup.
+function enforceStack(entry, pool, platform) {
+  const salKey = platform === 'fd' ? 'sal_fd' : 'sal_dk';
+  const cap = platform === 'fd' ? FD_SALARY_CAP : DK_SALARY_CAP;
+  const det = detectStack(entry.players);
+  if (!det || det.stacked) return entry;
+  const inLineup = new Set(entry.players.map(p => p.id));
+  const candidates = pool
+    .filter(p => p.team === det.qb.team && (p.pos === 'WR' || p.pos === 'TE') && !inLineup.has(p.id))
+    .sort((a, b) => b.proj - a.proj);
+  if (!candidates.length) return entry;
+  // Weakest pass-catcher slots first, so the stack costs the least projection
+  const slots = Object.entries(entry.lineup)
+    .filter(([, p]) => p && (p.pos === 'WR' || p.pos === 'TE'))
+    .sort((a, b) => a[1].proj - b[1].proj);
+  for (const [slot, out] of slots) {
+    for (const cand of candidates) {
+      if (cand.pos !== out.pos && slot !== 'FLEX') continue; // slot must accept the position
+      const newSal = entry.totalSal - out[salKey] + cand[salKey];
+      if (newSal <= cap) {
+        const lineup = { ...entry.lineup, [slot]: cand };
+        const players = entry.players.map(p => (p.id === out.id ? cand : p));
+        return {
+          ...entry, lineup, players,
+          totalSal: newSal,
+          totalProj: entry.totalProj - out.proj + cand.proj,
+        };
+      }
+    }
+  }
+  return entry;
+}
+
+function DFSScreen({ tier, onBack }) {
+  const [dfsPlatform, setDfsPlatform] = useState('dk'); // 'dk' | 'fd'
+  const [sport, setSport] = useState('nfl');
+  const [lineup, setLineup] = useState(null);
+  const [posFilter, setPosFilter] = useState('ALL');
+  const [aiAdvice, setAiAdvice] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [lockCountdown, setLockCountdown] = useState(null);
+  const [pool, setPool] = useState(DFS_SAMPLE_POOL);
+  const [poolSource, setPoolSource] = useState('demo');
+  const [projMap, setProjMap] = useState(null);
+  const [importErr, setImportErr] = useState(null);
+  const [numLineups, setNumLineups] = useState(3);
+  const [stackMode, setStackMode] = useState(false);
+  const [lineups, setLineups] = useState([]);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [dfsUses, setDfsUses] = useState(() => getDfsUsesToday());
+  const atDfsLimit = !isPro(tier) && dfsUses >= FREE_DFS_LIMIT;
+
+  // ROI tracker state
+  const [results, setResults] = useState(() => loadDfsResults());
+  const [showLogForm, setShowLogForm] = useState(false);
+  const [logFee, setLogFee] = useState('');
+  const [logType, setLogType] = useState('GPP');
+  const [logScore, setLogScore] = useState('');
+  const [logCashed, setLogCashed] = useState(false);
+  const [logWon, setLogWon] = useState('');
+  const stats = useMemo(() => dfsStats(results), [results]);
+  const [resultsSynced, setResultsSynced] = useState(false);
+
+  // KV sync — offline-first: localStorage is source of truth, KV mirrors it
+  // across devices. Pull + merge once on mount; push (debounced) on change.
+  const pushTimer = useRef(null);
+  const pushResults = (next) => {
+    if (pushTimer.current) clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(() => {
+      const { device, code } = dfsSyncIdentity();
+      fetch('/api/results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device, code, results: next, deleted: loadDfsDeleted() }),
+      }).then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d || !d.synced) return;
+          setResultsSynced(true);
+          // Adopt the server-merged state — converges concurrent edits from
+          // other devices (server unions results + tombstones on every POST).
+          if (Array.isArray(d.results)) {
+            setResults(d.results);
+            saveDfsResults(d.results);
+            if (d.deleted && typeof d.deleted === 'object') saveDfsDeleted(d.deleted);
+          }
+        })
+        .catch(() => {});
+    }, 800);
+  };
+
+  useEffect(() => {
+    let dead = false;
+    const { device, code } = dfsSyncIdentity();
+    const qs = `device=${encodeURIComponent(device)}` + (code ? `&code=${encodeURIComponent(code)}` : '');
+    fetch(`/api/results?${qs}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (dead || !d || !d.synced) return;
+        setResultsSynced(true);
+        const mergedDel = { ...(d.deleted || {}), ...loadDfsDeleted() };
+        const local = loadDfsResults();
+        const byId = {};
+        [...(d.results || []), ...local].forEach(r => { byId[r.id] = r; });
+        const merged = Object.values(byId)
+          .filter(r => !(r.id in mergedDel))
+          .sort((a, b) => b.id - a.id);
+        saveDfsDeleted(mergedDel);
+        setResults(merged);
+        saveDfsResults(merged);
+        pushResults(merged);
+      })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, []);
+
+  // Injury alerts — fetched once, edge-cached server-side
+  const injMap = useInjuries();
+
+  const lineupInjuries = useMemo(() => {
+    if (!lineup || !injMap) return [];
+    return lineup.players
+      .map(p => injuryInfo(injMap, p.name))
+      .filter(Boolean)
+      .sort((a, b) => b.sev - a.sev);
+  }, [lineup, injMap]);
+
+  const handleLogResult = () => {
+    const fee = parseFloat(logFee);
+    if (!(fee >= 0)) return;
+    const won = logCashed ? (parseFloat(logWon) || 0) : 0;
+    const entry = {
+      id: Date.now(),
+      date: dfsDateKey(),
+      fee,
+      type: logType,
+      score: parseFloat(logScore) || null,
+      won,
+    };
+    const next = [...results, entry];
+    setResults(next);
+    saveDfsResults(next);
+    pushResults(next);
+    setShowLogForm(false);
+    setLogFee(''); setLogScore(''); setLogWon(''); setLogCashed(false);
+  };
+
+  const handleDeleteResult = (id) => {
+    const next = results.filter(r => r.id !== id);
+    saveDfsDeleted({ ...loadDfsDeleted(), [id]: Date.now() });
+    setResults(next);
+    saveDfsResults(next);
+    pushResults(next);
+  };
+
+  // Slate lock: 1:00 PM ET Sunday (illustrative)
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      // Target: next Sunday 1pm ET — simplified demo
+      const target = new Date(now);
+      target.setHours(13, 0, 0, 0);
+      // Move to next Sunday
+      const daysUntilSun = (7 - now.getDay()) % 7 || 7;
+      target.setDate(target.getDate() + (now.getDay() === 0 && now.getHours() < 13 ? 0 : daysUntilSun));
+      const diff = Math.max(0, Math.floor((target - now) / 1000));
+      const h = Math.floor(diff / 3600);
+      const m = Math.floor((diff % 3600) / 60);
+      const s = diff % 60;
+      setLockCountdown(`${h}h ${m}m ${s}s`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const salKey = dfsPlatform === 'fd' ? 'sal_fd' : 'sal_dk';
+  const cap = dfsPlatform === 'fd' ? FD_SALARY_CAP : DK_SALARY_CAP;
+
+  const { pool: effectivePool, matched: projMatched } = useMemo(
+    () => applyProjections(pool, projMap), [pool, projMap]
+  );
+
+  const filtered = posFilter === 'ALL'
+    ? effectivePool
+    : effectivePool.filter(p => p.pos === posFilter);
+
+  const handleGenerate = () => {
+    if (atDfsLimit) return;
+    let results = generateLineups(effectivePool, dfsPlatform, numLineups);
+    if (stackMode) results = results.map(l => enforceStack(l, effectivePool, dfsPlatform));
+    setLineups(results);
+    setActiveIdx(0);
+    setLineup(results[0] || null);
+    setAiAdvice(null);
+    setDfsUses(bumpDfsUses());
+  };
+
+  const handleCsvImport = (file) => {
+    setImportErr(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseDfsCsv(String(reader.result || ''));
+      if (!parsed) {
+        setImportErr('Could not read that file — export the salary CSV from a DK or FD contest lobby.');
+        return;
+      }
+      setPool(parsed.players);
+      setPoolSource('imported');
+      setDfsPlatform(parsed.platform);
+      setLineups([]); setLineup(null); setAiAdvice(null);
+    };
+    reader.onerror = () => setImportErr('File read failed — try again.');
+    reader.readAsText(file);
+  };
+
+  const handleProjImport = (file) => {
+    setImportErr(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseProjectionsCsv(String(reader.result || ''));
+      if (!parsed) {
+        setImportErr('Could not read projections — need a CSV with a player column plus projection or ownership columns (ETR, RotoGrinders, etc).');
+        return;
+      }
+      setProjMap(parsed);
+      setLineups([]); setLineup(null); setAiAdvice(null);
+    };
+    reader.onerror = () => setImportErr('File read failed — try again.');
+    reader.readAsText(file);
+  };
+
+  const handleAIAdvice = async () => {
+    if (!lineup) return;
+    setAiLoading(true);
+    try {
+      const playerList = lineup.players.map(p =>
+        `${p.pos} ${p.name} (${p.team}) Proj:${p.proj} Own:${p.own_pct}%`
+      ).join('\n');
+
+      const res = await fetch('/api/ai', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          model:'claude-haiku-4-5-20251001',
+          max_tokens:350,
+          system:`You are a DFS lineup advisor. Analyze the lineup and return:
+Line 1: Overall assessment (one sentence, max 15 words)
+Line 2: Best stacking opportunity or contrarian edge (one sentence)
+Line 3: Biggest risk in this lineup (one sentence)
+Line 4: One swap to consider (format: "Consider swapping X for Y — [reason]")
+Line 5: A final edge note starting exactly with "P.S. — " (max 15 words)
+No headers, no bullets, just 5 lines.`,
+          messages:[{
+            role:'user',
+            content:`Platform: ${dfsPlatform.toUpperCase()} | Sport: ${sport.toUpperCase()}\nLineup:\n${playerList}\nTotal salary: $${lineup.totalSal.toLocaleString()} of $${cap.toLocaleString()}\nTotal projected: ${lineup.totalProj.toFixed(1)} pts\nGive me your analysis.`,
+          }],
+        }),
+      });
+      const data = await res.json();
+      const text = data.content?.find(b => b.type==='text')?.text || '';
+      setAiAdvice(text.trim());
+    } catch (e) {
+      setAiAdvice('AI analysis unavailable — check connection.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const levScore = lineup ? leverageScore(lineup.players) : null;
+
+  return (
+    <div style={{
+      minHeight:'100vh', background:T.bg, color:T.text,
+      fontFamily:"'Barlow',sans-serif", display:'flex', flexDirection:'column',
+    }}>
+      {/* Header */}
+      <div style={{
+        background:T.panel, borderBottom:`1px solid ${T.border}`,
+        padding:'14px 16px', display:'flex', alignItems:'center', gap:12, flexShrink:0,
+      }}>
+        <button onClick={onBack} style={{
+          padding:'6px 10px', background:'transparent', color:T.mute,
+          border:`1px solid ${T.border}`, borderRadius:6,
+          fontFamily:"'Share Tech Mono',monospace", fontSize:10,
+          letterSpacing:1, cursor:'pointer',
+        }}>← BACK</button>
+        <div style={{flex:1}}>
+          <div style={{
+            fontFamily:"'Barlow Condensed',sans-serif",
+            fontSize:22, fontWeight:900, color:T.teal, letterSpacing:1, lineHeight:1,
+          }}>DFS PICKSETTER</div>
+          <div style={{
+            fontFamily:"'Share Tech Mono',monospace",
+            fontSize:9, color:T.dim, letterSpacing:1.5, marginTop:2,
+          }}>DAILY LINEUP OPTIMIZER · BETA</div>
+        </div>
+        {/* Slate lock countdown */}
+        <div style={{
+          background:`${T.red}15`, border:`1px solid ${T.red}33`,
+          borderRadius:6, padding:'6px 10px', textAlign:'center',
+        }}>
+          <div style={{
+            fontFamily:"'Share Tech Mono',monospace",
+            fontSize:8, color:T.dim, letterSpacing:1.5,
+          }}>SLATE LOCK</div>
+          <div style={{
+            fontFamily:"'Share Tech Mono',monospace",
+            fontSize:11, color:T.amber, letterSpacing:1, fontWeight:700,
+          }}>{lockCountdown || '—'}</div>
+        </div>
+      </div>
+
+      <div style={{flex:1, overflowY:'auto', padding:'14px 16px'}}>
+
+        {/* Platform + Sport selectors */}
+        <div style={{display:'flex', gap:8, marginBottom:14}}>
+          {/* Platform */}
+          <div style={{flex:1}}>
+            <div style={{
+              fontFamily:"'Share Tech Mono',monospace",
+              fontSize:8, color:T.dim, letterSpacing:1.5, marginBottom:6,
+            }}>PLATFORM</div>
+            <div style={{display:'flex', gap:6}}>
+              {[['dk','DraftKings'],['fd','FanDuel']].map(([id,label]) => (
+                <button key={id} onClick={() => { setDfsPlatform(id); setLineup(null); }} style={{
+                  flex:1, padding:'8px 6px',
+                  background: dfsPlatform===id ? `${T.teal}22` : T.card,
+                  border: dfsPlatform===id ? `2px solid ${T.teal}` : `1px solid ${T.border}`,
+                  borderRadius:8, color: dfsPlatform===id ? T.teal : T.mute,
+                  fontFamily:"'Barlow Condensed',sans-serif",
+                  fontSize:14, fontWeight:900, letterSpacing:0.5, cursor:'pointer',
+                }}>{label}</button>
+              ))}
+            </div>
+          </div>
+          {/* Sport */}
+          <div style={{flex:1}}>
+            <div style={{
+              fontFamily:"'Share Tech Mono',monospace",
+              fontSize:8, color:T.dim, letterSpacing:1.5, marginBottom:6,
+            }}>SPORT</div>
+            <div style={{display:'flex', gap:6}}>
+              {[['nfl','NFL'],['nba','NBA'],['mlb','MLB']].map(([id,label]) => (
+                <button key={id} onClick={() => setSport(id)} style={{
+                  flex:1, padding:'8px 4px',
+                  background: sport===id ? `${T.blue}22` : T.card,
+                  border: sport===id ? `2px solid ${T.blue}` : `1px solid ${T.border}`,
+                  borderRadius:8, color: sport===id ? T.blue : T.mute,
+                  fontFamily:"'Barlow Condensed',sans-serif",
+                  fontSize:13, fontWeight:900, cursor:'pointer',
+                  opacity: id !== 'nfl' ? 0.5 : 1,
+                }}>{label}{id !== 'nfl' ? ' 🔜' : ''}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Salary import */}
+        <div style={{
+          background:T.card, border:`1px solid ${poolSource==='imported' ? T.teal+'55' : T.border}`,
+          borderRadius:10, padding:'10px 12px', marginBottom:12,
+          display:'flex', alignItems:'center', gap:10,
+        }}>
+          <div style={{flex:1}}>
+            <div style={{
+              fontFamily:"'Share Tech Mono',monospace",
+              fontSize:8, color:T.dim, letterSpacing:1.5, marginBottom:2,
+            }}>SLATE DATA</div>
+            <div style={{
+              fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:13, fontWeight:700,
+              color: poolSource==='imported' ? T.teal : T.amber,
+            }}>
+              {poolSource==='imported'
+                ? `✓ IMPORTED · ${pool.length} PLAYERS`
+                : 'DEMO SLATE — import real salaries'}
+            </div>
+            {projMap && (
+              <div style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:9, color: projMatched > 0 ? T.green : T.amber, marginTop:2, letterSpacing:0.5,
+              }}>PROJ/OWN: {projMatched} matched</div>
+            )}
+            {importErr && <div style={{fontSize:10, color:T.red, marginTop:2}}>{importErr}</div>}
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:6, flexShrink:0}}>
+            <label style={{
+              padding:'7px 12px', background:`${T.teal}18`, color:T.teal,
+              border:`1px solid ${T.teal}44`, borderRadius:8, cursor:'pointer',
+              fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:13, fontWeight:900, letterSpacing:0.5, textAlign:'center',
+            }}>
+              SALARIES CSV
+              <input type="file" accept=".csv,text/csv" style={{display:'none'}}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleCsvImport(f); e.target.value=''; }} />
+            </label>
+            <label style={{
+              padding:'7px 12px', background: projMap ? `${T.green}18` : T.card,
+              color: projMap ? T.green : T.mute,
+              border:`1px solid ${projMap ? T.green+'44' : T.border}`, borderRadius:8, cursor:'pointer',
+              fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:13, fontWeight:900, letterSpacing:0.5, textAlign:'center',
+            }}>
+              {projMap ? '✓ PROJ/OWN' : '+ PROJ/OWN'}
+              <input type="file" accept=".csv,text/csv" style={{display:'none'}}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleProjImport(f); e.target.value=''; }} />
+            </label>
+          </div>
+        </div>
+
+        {/* Lineup count selector */}
+        <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:10}}>
+          <div style={{
+            fontFamily:"'Share Tech Mono',monospace",
+            fontSize:8, color:T.dim, letterSpacing:1.5, flexShrink:0,
+          }}>LINEUPS</div>
+          {[1,3,5,10,20].map(n => (
+            <button key={n} onClick={() => setNumLineups(n)} style={{
+              flex:1, padding:'6px 0',
+              background: numLineups===n ? `${T.teal}22` : T.card,
+              border: numLineups===n ? `1px solid ${T.teal}` : `1px solid ${T.border}`,
+              borderRadius:6, color: numLineups===n ? T.teal : T.mute,
+              fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:13, fontWeight:900, cursor:'pointer',
+            }}>{n}</button>
+          ))}
+          <button onClick={() => setStackMode(s => !s)} style={{
+            flexShrink:0, padding:'6px 10px',
+            background: stackMode ? `${T.purple}22` : T.card,
+            border: stackMode ? `1px solid ${T.purple}` : `1px solid ${T.border}`,
+            borderRadius:6, color: stackMode ? T.purple : T.mute,
+            fontFamily:"'Barlow Condensed',sans-serif",
+            fontSize:13, fontWeight:900, cursor:'pointer', letterSpacing:0.5,
+          }} title="Force every lineup to pair the QB with a same-team WR/TE">
+            🔗 STACK {stackMode ? 'ON' : 'OFF'}
+          </button>
+        </div>
+
+        {/* Generate button — free tier: 3 generations/day */}
+        <button onClick={handleGenerate} disabled={atDfsLimit} style={{
+          width:'100%', padding:'16px',
+          background: atDfsLimit ? T.card : `linear-gradient(135deg, ${T.teal}, #14B8A6)`,
+          color: atDfsLimit ? T.dim : T.bg,
+          border: atDfsLimit ? `1px solid ${T.border}` : 'none', borderRadius:12,
+          fontFamily:"'Barlow Condensed',sans-serif",
+          fontSize:22, fontWeight:900, letterSpacing:1.5,
+          cursor: atDfsLimit ? 'default' : 'pointer',
+          boxShadow: atDfsLimit ? 'none' : `0 4px 24px rgba(45,212,191,0.35)`,
+          marginBottom:6,
+        }}>
+          {atDfsLimit ? 'DAILY LIMIT REACHED' : `⚡ GENERATE ${numLineups > 1 ? numLineups + ' LINEUPS' : 'LINEUP'} →`}
+        </button>
+        <div style={{
+          fontFamily:"'Share Tech Mono',monospace",
+          fontSize:9, color: atDfsLimit ? T.amber : T.dim, letterSpacing:1,
+          textAlign:'center', marginBottom:14,
+        }}>
+          {isPro(tier) ? 'PRO · UNLIMITED GENERATIONS' : `${dfsUses}/${FREE_DFS_LIMIT} FREE TODAY${atDfsLimit ? ' — PRO UNLOCKS UNLIMITED' : ''}`}
+        </div>
+
+        {/* Lineup switcher */}
+        {lineups.length > 1 && (
+          <div style={{display:'flex', gap:6, marginBottom:10, flexWrap:'wrap'}}>
+            {lineups.map((l, i) => (
+              <button key={i} onClick={() => { setActiveIdx(i); setLineup(lineups[i]); setAiAdvice(null); }} style={{
+                padding:'5px 10px',
+                background: activeIdx===i ? `${T.gold}22` : T.card,
+                border: activeIdx===i ? `1px solid ${T.gold}` : `1px solid ${T.border}`,
+                borderRadius:6, color: activeIdx===i ? T.gold : T.mute,
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:10, fontWeight:700, cursor:'pointer', letterSpacing:0.5,
+              }}>L{i+1} · {l.totalProj.toFixed(0)}</button>
+            ))}
+          </div>
+        )}
+
+        {/* Optimized lineup display */}
+        {lineup && (
+          <div style={{
+            background:T.card, border:`1px solid ${T.border}`,
+            borderRadius:12, padding:14, marginBottom:14,
+            animation:'slide-up 0.2s ease',
+          }}>
+            {/* Injury alert banner */}
+            {lineupInjuries.length > 0 && (
+              <div style={{
+                background:'#FF5C5C15', border:'1px solid #FF5C5C55',
+                borderRadius:8, padding:'8px 12px', marginBottom:12,
+              }}>
+                <div style={{
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:8, color:'#FF5C5C', letterSpacing:1.5, marginBottom:4,
+                }}>⚠ INJURY ALERT</div>
+                {lineupInjuries.map(inj => (
+                  <div key={inj.name} style={{fontSize:12, color:T.text, lineHeight:1.6}}>
+                    <span style={{
+                      fontFamily:"'Share Tech Mono',monospace", fontSize:9, fontWeight:700,
+                      color: inj.sev >= 3 ? '#FF5C5C' : T.amber,
+                      border:`1px solid ${inj.sev >= 3 ? '#FF5C5C55' : T.amber+'55'}`,
+                      borderRadius:3, padding:'1px 4px', marginRight:6,
+                    }}>{inj.tag}</span>
+                    {inj.name} <span style={{color:T.mute}}>({inj.pos} · {inj.team})</span>
+                    {inj.sev >= 3 && <span style={{color:T.gold}}> — P.S. swap before lock.</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Stack indicator */}
+            {(() => {
+              const det = detectStack(lineup.players);
+              if (!det) return null;
+              return (
+                <div style={{
+                  display:'flex', alignItems:'center', gap:6, marginBottom:10,
+                  fontFamily:"'Share Tech Mono',monospace", fontSize:9, letterSpacing:0.5,
+                }}>
+                  <span style={{
+                    padding:'2px 6px', borderRadius:3, fontWeight:700,
+                    color: det.stacked ? T.purple : T.dim,
+                    background: det.stacked ? `${T.purple}18` : 'transparent',
+                    border:`1px solid ${det.stacked ? T.purple+'55' : T.border}`,
+                  }}>🔗 {det.stacked ? 'STACKED' : 'NO STACK'}</span>
+                  {det.stacked && (
+                    <span style={{color:T.mute}}>
+                      {det.qb.name.split(' ').slice(-1)[0]} + {det.mates.map(m => m.name.split(' ').slice(-1)[0]).join(' + ')} ({det.qb.team})
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Lineup header stats */}
+            <div style={{
+              display:'flex', gap:10, marginBottom:12, flexWrap:'wrap',
+            }}>
+              {[
+                { label:'PROJECTED', val:`${lineup.totalProj.toFixed(1)} pts`, color:T.green },
+                { label:'SALARY USED', val:`$${lineup.totalSal.toLocaleString()}`, color:T.gold },
+                { label:'REMAINING', val:`$${(cap - lineup.totalSal).toLocaleString()}`, color:T.mute },
+                { label:'LEVERAGE', val:`${levScore}/10`, color: levScore >= 7 ? T.green : levScore >= 4 ? T.amber : T.red },
+              ].map(({ label, val, color }) => (
+                <div key={label} style={{
+                  background:T.panel, borderRadius:8, padding:'8px 12px',
+                  flex:1, minWidth:80, textAlign:'center',
+                }}>
+                  <div style={{
+                    fontFamily:"'Share Tech Mono',monospace",
+                    fontSize:7, color:T.dim, letterSpacing:1.5, marginBottom:3,
+                  }}>{label}</div>
+                  <div style={{
+                    fontFamily:"'Barlow Condensed',sans-serif",
+                    fontSize:18, fontWeight:900, color,
+                  }}>{val}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Players */}
+            {['QB','RB1','RB2','WR1','WR2','WR3','TE','FLEX','DST'].map(slot => {
+              const p = lineup.lineup[slot];
+              if (!p) return null;
+              const posLabel = slot.replace(/[0-9]/g,'');
+              return (
+                <div key={slot} style={{
+                  display:'flex', alignItems:'center', gap:10, padding:'8px 0',
+                  borderBottom:`1px solid ${T.border}`,
+                }}>
+                  <div style={{
+                    fontFamily:"'Share Tech Mono',monospace",
+                    fontSize:8, color:T.dim, letterSpacing:1, width:36, flexShrink:0,
+                  }}>{slot}</div>
+                  <PosBadge pos={p.pos}/>
+                  <div style={{flex:1}}>
+                    <div style={{
+                      fontFamily:"'Barlow Condensed',sans-serif",
+                      fontSize:16, fontWeight:700, color:T.text, lineHeight:1.1,
+                    }}>
+                      {p.name}
+                      {(() => {
+                        const inj = injuryInfo(injMap, p.name);
+                        return inj ? (
+                          <span style={{
+                            fontFamily:"'Share Tech Mono',monospace", fontSize:8, fontWeight:700,
+                            color: inj.sev >= 3 ? '#FF5C5C' : T.amber,
+                            border:`1px solid ${inj.sev >= 3 ? '#FF5C5C55' : T.amber+'55'}`,
+                            borderRadius:3, padding:'1px 3px', marginLeft:6, verticalAlign:'middle',
+                          }}>{inj.tag}</span>
+                        ) : null;
+                      })()}
+                    </div>
+                    <div style={{
+                      fontFamily:"'Share Tech Mono',monospace",
+                      fontSize:9, color:T.mute, marginTop:1,
+                    }}>{p.team}</div>
+                  </div>
+                  {/* Ownership */}
+                  <div style={{ textAlign:'right', flexShrink:0 }}>
+                    <div style={{
+                      fontFamily:"'Share Tech Mono',monospace",
+                      fontSize:9, color:ownershipColor(p.own_pct), letterSpacing:0.5,
+                    }}>{p.own_pct == null ? 'own n/a' : `${p.own_pct}% owned`}</div>
+                    <div style={{
+                      fontFamily:"'Barlow Condensed',sans-serif",
+                      fontSize:14, fontWeight:700, color:T.green,
+                    }}>{p.proj} pts</div>
+                  </div>
+                  {/* Salary */}
+                  <div style={{
+                    fontFamily:"'Share Tech Mono',monospace",
+                    fontSize:10, color:T.dim, letterSpacing:0.5,
+                    flexShrink:0, textAlign:'right', minWidth:52,
+                  }}>${(p[salKey]/1000).toFixed(1)}K</div>
+                </div>
+              );
+            })}
+
+            {/* AI Analysis button */}
+            <div style={{marginTop:12}}>
+              <button onClick={handleAIAdvice} disabled={aiLoading} style={{
+                width:'100%', padding:'10px',
+                background:`${T.purple}18`, color:T.purple,
+                border:`1px solid ${T.purple}44`, borderRadius:8,
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:15, fontWeight:900, letterSpacing:1, cursor:'pointer',
+              }}>✦ {aiLoading ? 'ANALYZING…' : 'AI LINEUP ANALYSIS'}</button>
+
+              {aiAdvice && (
+                <div style={{
+                  marginTop:10, padding:'10px 12px',
+                  background:`${T.purple}10`, border:`1px solid ${T.purple}33`,
+                  borderRadius:8, animation:'slide-up 0.2s ease',
+                }}>
+                  {aiAdvice.split('\n').filter(Boolean).map((line, i) => (
+                    <p key={i} style={{
+                      margin:'0 0 6px', fontSize:13,
+                      color: line.startsWith('P.S.') ? T.gold : i === 0 ? T.text : T.mute,
+                      fontWeight: line.startsWith('P.S.') ? 600 : 400, lineHeight:1.6,
+                    }}>{line}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── MY RESULTS — ROI tracker + streak ── */}
+        <div style={{
+          background:T.card, border:`1px solid ${stats.streak >= 3 ? T.gold+'55' : T.border}`,
+          borderRadius:12, padding:14, marginBottom:14,
+        }}>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom: stats.n ? 12 : 0}}>
+            <div style={{
+              fontFamily:"'Share Tech Mono',monospace",
+              fontSize:9, color:T.dim, letterSpacing:1.5, flex:1,
+            }}>MY RESULTS{resultsSynced && <span style={{color:T.green, marginLeft:6}}>☁ SYNCED</span>}</div>
+            {stats.streak >= 2 && (
+              <div style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:10, color:T.gold, letterSpacing:0.5, fontWeight:700,
+              }}>🔥 {stats.streak}-DAY STREAK</div>
+            )}
+            <button onClick={() => setShowLogForm(s => !s)} style={{
+              padding:'5px 12px',
+              background: showLogForm ? T.card : `${T.gold}18`,
+              color: showLogForm ? T.mute : T.gold,
+              border:`1px solid ${showLogForm ? T.border : T.gold+'44'}`,
+              borderRadius:6, cursor:'pointer',
+              fontFamily:"'Barlow Condensed',sans-serif",
+              fontSize:13, fontWeight:900, letterSpacing:0.5,
+            }}>{showLogForm ? 'CANCEL' : '+ LOG RESULT'}</button>
+          </div>
+
+          {/* Log form */}
+          {showLogForm && (
+            <div style={{
+              background:T.panel, borderRadius:8, padding:12, marginBottom:12,
+              animation:'slide-up 0.2s ease',
+            }}>
+              <div style={{display:'flex', gap:6, marginBottom:8}}>
+                {['GPP','CASH','50/50','H2H'].map(t => (
+                  <button key={t} onClick={() => setLogType(t)} style={{
+                    flex:1, padding:'5px 0',
+                    background: logType===t ? `${T.teal}22` : T.card,
+                    border: logType===t ? `1px solid ${T.teal}` : `1px solid ${T.border}`,
+                    borderRadius:5, color: logType===t ? T.teal : T.dim,
+                    fontFamily:"'Share Tech Mono',monospace",
+                    fontSize:9, letterSpacing:0.5, cursor:'pointer',
+                  }}>{t}</button>
+                ))}
+              </div>
+              <div style={{display:'flex', gap:6, marginBottom:8}}>
+                {[
+                  ['ENTRY $', logFee, setLogFee, '5.00'],
+                  ['SCORE', logScore, setLogScore, '142.3'],
+                ].map(([label, val, setter, ph]) => (
+                  <div key={label} style={{flex:1}}>
+                    <div style={{
+                      fontFamily:"'Share Tech Mono',monospace",
+                      fontSize:7, color:T.dim, letterSpacing:1, marginBottom:3,
+                    }}>{label}</div>
+                    <input type="number" inputMode="decimal" value={val} placeholder={ph}
+                      onChange={e => setter(e.target.value)}
+                      style={{
+                        width:'100%', boxSizing:'border-box', padding:'7px 8px',
+                        background:T.card, border:`1px solid ${T.border}`, borderRadius:5,
+                        color:T.text, fontFamily:"'Share Tech Mono',monospace", fontSize:12,
+                      }} />
+                  </div>
+                ))}
+              </div>
+              <div style={{display:'flex', gap:6, alignItems:'flex-end'}}>
+                <div style={{display:'flex', gap:6, flex:1}}>
+                  {[[false,'BUST'],[true,'CASHED ✓']].map(([v,label]) => (
+                    <button key={label} onClick={() => setLogCashed(v)} style={{
+                      flex:1, padding:'7px 0',
+                      background: logCashed===v ? (v ? `${T.green}22` : `${T.red}18`) : T.card,
+                      border:`1px solid ${logCashed===v ? (v ? T.green : T.red) : T.border}`,
+                      borderRadius:5, color: logCashed===v ? (v ? T.green : T.red) : T.dim,
+                      fontFamily:"'Barlow Condensed',sans-serif",
+                      fontSize:13, fontWeight:900, letterSpacing:0.5, cursor:'pointer',
+                    }}>{label}</button>
+                  ))}
+                </div>
+                {logCashed && (
+                  <div style={{flex:1}}>
+                    <div style={{
+                      fontFamily:"'Share Tech Mono',monospace",
+                      fontSize:7, color:T.dim, letterSpacing:1, marginBottom:3,
+                    }}>WON $</div>
+                    <input type="number" inputMode="decimal" value={logWon} placeholder="12.50"
+                      onChange={e => setLogWon(e.target.value)}
+                      style={{
+                        width:'100%', boxSizing:'border-box', padding:'7px 8px',
+                        background:T.card, border:`1px solid ${T.green}44`, borderRadius:5,
+                        color:T.green, fontFamily:"'Share Tech Mono',monospace", fontSize:12,
+                      }} />
+                  </div>
+                )}
+              </div>
+              <button onClick={handleLogResult} disabled={!(parseFloat(logFee) >= 0) || logFee===''} style={{
+                width:'100%', marginTop:10, padding:'10px',
+                background: logFee==='' ? T.card : `${T.gold}22`,
+                color: logFee==='' ? T.dim : T.gold,
+                border:`1px solid ${logFee==='' ? T.border : T.gold+'55'}`,
+                borderRadius:8, cursor: logFee==='' ? 'default' : 'pointer',
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:15, fontWeight:900, letterSpacing:1,
+              }}>SAVE RESULT</button>
+            </div>
+          )}
+
+          {stats.n === 0 && !showLogForm && (
+            <div style={{fontSize:12, color:T.mute, marginTop:8, lineHeight:1.6}}>
+              Log every contest you enter — entry fee, score, cash or bust — and PickSetter tracks
+              your cash rate, ROI, and daily streak. <span style={{color:T.gold}}>P.S. — the sharps track everything.</span>
+            </div>
+          )}
+
+          {stats.n > 0 && (
+            <>
+              {/* Stat tiles */}
+              <div style={{display:'flex', gap:8, marginBottom:12, flexWrap:'wrap'}}>
+                {[
+                  { label:'ENTRIES', val: stats.n, color: T.text },
+                  { label:'CASH %', val: `${stats.cashPct}%`, color: stats.cashPct >= 50 ? T.green : T.amber },
+                  { label:'ROI', val: `${stats.roi > 0 ? '+' : ''}${stats.roi}%`, color: stats.roi >= 0 ? T.green : T.red },
+                  { label:'PROFIT', val: `${stats.profit < 0 ? '-' : '+'}$${Math.abs(stats.profit).toFixed(2)}`, color: stats.profit >= 0 ? T.green : T.red },
+                ].map(({label, val, color}) => (
+                  <div key={label} style={{
+                    background:T.panel, borderRadius:8, padding:'8px 10px',
+                    flex:1, minWidth:70, textAlign:'center',
+                  }}>
+                    <div style={{
+                      fontFamily:"'Share Tech Mono',monospace",
+                      fontSize:7, color:T.dim, letterSpacing:1.5, marginBottom:3,
+                    }}>{label}</div>
+                    <div style={{
+                      fontFamily:"'Barlow Condensed',sans-serif",
+                      fontSize:18, fontWeight:900, color,
+                    }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Profit graph (cumulative) */}
+              {stats.series.length > 1 && (() => {
+                const W = 600, H = 80, PAD = 4;
+                const min = Math.min(0, ...stats.series);
+                const max = Math.max(0, ...stats.series);
+                const span = (max - min) || 1;
+                const x = i => PAD + (i / (stats.series.length - 1)) * (W - PAD * 2);
+                const y = v => PAD + (1 - (v - min) / span) * (H - PAD * 2);
+                const pts = stats.series.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+                const lineColor = stats.profit >= 0 ? T.green : T.red;
+                return (
+                  <div style={{background:T.panel, borderRadius:8, padding:'8px 10px', marginBottom:12}}>
+                    <div style={{
+                      fontFamily:"'Share Tech Mono',monospace",
+                      fontSize:7, color:T.dim, letterSpacing:1.5, marginBottom:4,
+                    }}>PROFIT OVER TIME</div>
+                    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%', height:60, display:'block'}}>
+                      <line x1={PAD} y1={y(0)} x2={W-PAD} y2={y(0)} stroke={T.border} strokeWidth="1" strokeDasharray="4 4" />
+                      <polyline points={pts} fill="none" stroke={lineColor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+                      <circle cx={x(stats.series.length-1)} cy={y(stats.series[stats.series.length-1])} r="4" fill={lineColor} />
+                    </svg>
+                  </div>
+                );
+              })()}
+
+              {/* Recent entries (last 5) */}
+              {[...results].sort((a,b) => (b.id||0)-(a.id||0)).slice(0,5).map(r => (
+                <div key={r.id} style={{
+                  display:'flex', alignItems:'center', gap:8, padding:'6px 0',
+                  borderBottom:`1px solid ${T.border}`,
+                }}>
+                  <div style={{
+                    fontFamily:"'Share Tech Mono',monospace",
+                    fontSize:9, color:T.dim, width:74, flexShrink:0,
+                  }}>{r.date.slice(5)} · {r.type}</div>
+                  <div style={{
+                    fontFamily:"'Share Tech Mono',monospace",
+                    fontSize:10, color:T.mute, flex:1,
+                  }}>${r.fee.toFixed(2)} entry{r.score != null ? ` · ${r.score} pts` : ''}</div>
+                  <div style={{
+                    fontFamily:"'Barlow Condensed',sans-serif",
+                    fontSize:14, fontWeight:900,
+                    color: r.won > 0 ? T.green : T.red,
+                  }}>{r.won > 0 ? `+$${(r.won - r.fee).toFixed(2)}` : `-$${r.fee.toFixed(2)}`}</div>
+                  <button onClick={() => handleDeleteResult(r.id)} style={{
+                    background:'transparent', border:'none', color:T.dim,
+                    fontSize:11, cursor:'pointer', padding:'2px 4px',
+                  }}>✕</button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* Player pool table */}
+        <div style={{
+          background:T.card, border:`1px solid ${T.border}`,
+          borderRadius:12, overflow:'hidden',
+        }}>
+          <div style={{
+            padding:'10px 14px', borderBottom:`1px solid ${T.border}`,
+            display:'flex', alignItems:'center', gap:8,
+          }}>
+            <div style={{
+              fontFamily:"'Share Tech Mono',monospace",
+              fontSize:9, color:T.dim, letterSpacing:1.5, flex:1,
+            }}>PLAYER POOL</div>
+            <div style={{display:'flex', gap:4}}>
+              {['ALL','QB','RB','WR','TE','DST'].map(pos => (
+                <button key={pos} onClick={() => setPosFilter(pos)} style={{
+                  padding:'3px 8px',
+                  background: posFilter===pos ? `${T.teal}22` : 'transparent',
+                  border: posFilter===pos ? `1px solid ${T.teal}` : `1px solid ${T.border}`,
+                  borderRadius:4, color: posFilter===pos ? T.teal : T.dim,
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:8, letterSpacing:1, cursor:'pointer',
+                }}>{pos}</button>
+              ))}
+            </div>
+          </div>
+          {/* Column headers */}
+          <div style={{
+            display:'flex', padding:'6px 14px',
+            background:`${T.panel}`,
+            fontFamily:"'Share Tech Mono',monospace",
+            fontSize:8, color:T.dim, letterSpacing:1,
+          }}>
+            <span style={{flex:1}}>PLAYER</span>
+            <span style={{width:52, textAlign:'right'}}>SALARY</span>
+            <span style={{width:48, textAlign:'right'}}>PROJ</span>
+            <span style={{width:52, textAlign:'right'}}>OWNED</span>
+          </div>
+          {filtered.map(p => (
+            <div key={p.id} style={{
+              display:'flex', alignItems:'center', gap:8,
+              padding:'8px 14px', borderBottom:`1px solid ${T.border}`,
+            }}>
+              <PosBadge pos={p.pos}/>
+              <div style={{flex:1}}>
+                <div style={{
+                  fontFamily:"'Barlow Condensed',sans-serif",
+                  fontSize:15, fontWeight:700, color:T.text,
+                }}>{p.name}</div>
+                <div style={{
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:8, color:T.mute,
+                }}>{p.team}</div>
+              </div>
+              <div style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:11, color:T.dim, width:52, textAlign:'right',
+              }}>${(p[salKey]/1000).toFixed(1)}K</div>
+              <div style={{
+                fontFamily:"'Barlow Condensed',sans-serif",
+                fontSize:15, fontWeight:700, color:T.green,
+                width:48, textAlign:'right',
+              }}>{p.proj}</div>
+              <div style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:10, width:52, textAlign:'right',
+                color:ownershipColor(p.own_pct),
+              }}>{p.own_pct}%</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Coming Soon section */}
+        <div style={{
+          marginTop:16, padding:'14px 16px',
+          background:`${T.card}`, border:`1px solid ${T.border}`,
+          borderRadius:12,
+        }}>
+          <div style={{
+            fontFamily:"'Share Tech Mono',monospace",
+            fontSize:8, color:T.dim, letterSpacing:2, marginBottom:10,
+          }}>COMING IN DFS PRO</div>
+          {[
+            '📰  Breaking news alerts before lock',
+            '🏀  NBA + MLB lineup slots (sport-specific optimizer)',
+            '📈  Late-swap optimizer — re-rank after early games lock',
+          ].map((item, i) => (
+            <div key={i} style={{
+              fontSize:12, color:T.mute, lineHeight:1.8, marginBottom:2,
+            }}>{item}</div>
+          ))}
+        </div>
+
+        <div style={{ height:24 }} />
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HOME — product hub. Draft Intelligence is primary (it monetizes); DFS and
+// World Cup are secondary tiles. Setup/DFS/WC live one tap deeper.
+// ═══════════════════════════════════════════════════════════════════════════
+function HomeScreen({ tier, savedDraftsCount, onDraft, onDFS, onWorldCup, onPortfolio }) {
+  const card = (accent) => ({
+    width: '100%', textAlign: 'left', cursor: 'pointer', borderRadius: 14,
+    background: `${accent}0E`, border: `1px solid ${accent}33`,
+    fontFamily: "'Barlow',sans-serif", padding: '16px 18px', marginBottom: 12,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  });
+  const title = (accent, size) => ({
+    fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 900,
+    color: accent, letterSpacing: 0.5, fontSize: size,
+    display: 'flex', alignItems: 'center', gap: 8,
+  });
+  const sub = { fontSize: 11, color: T.mute, marginTop: 3 };
+  const chip = (accent) => ({
+    fontFamily: "'Share Tech Mono',monospace", fontSize: 8, letterSpacing: 1,
+    color: accent, background: `${accent}18`, border: `1px solid ${accent}44`,
+    padding: '1px 5px', borderRadius: 4,
+  });
+
+  return (
+    <div style={{
+      minHeight: '100svh',
+      background: `linear-gradient(160deg, #0A0E1C 0%, ${T.bg} 50%)`,
+      fontFamily: "'Barlow',sans-serif", color: T.text,
+      padding: '28px 20px 40px', maxWidth: 560, margin: '0 auto',
+    }}>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <div style={{
+          width: 28, height: 28, borderRadius: 6, background: T.gold,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: "'Barlow Condensed',sans-serif", fontSize: 14, fontWeight: 900, color: T.bg,
+        }}>PS.</div>
+        <span style={{
+          fontFamily: "'Share Tech Mono',monospace", fontSize: 11,
+          color: T.gold, letterSpacing: 2, fontWeight: 700,
+        }}>PICKSETTER</span>
+        {isPro(tier) && (
+          <span style={chip(isElite(tier) ? T.purple : T.gold)}>{isElite(tier) ? 'ELITE' : 'PRO'}</span>
+        )}
+      </div>
+      <h1 style={{
+        fontFamily: "'Barlow Condensed',sans-serif", fontSize: 38, fontWeight: 900,
+        margin: '0 0 4px', lineHeight: 0.95, letterSpacing: -1,
+      }}>SET YOUR <span style={{ color: T.gold }}>EDGE.</span></h1>
+      <p style={{ fontSize: 12, color: T.mute, margin: '0 0 22px' }}>
+        Pick your game. PickSetter handles the intel.
+      </p>
+
+      {/* PRIMARY — Draft Intelligence */}
+      <button onClick={onDraft} style={{ ...card(T.gold), padding: '20px 18px', border: `1px solid ${T.gold}55` }}>
+        <div>
+          <div style={title(T.gold, 22)}>📋 DRAFT INTELLIGENCE</div>
+          <div style={sub}>NFL Best Ball · live ADP · tier alerts · AI pick recs · Underdog &amp; DraftKings</div>
+        </div>
+        <span style={{ color: T.gold, fontSize: 20 }}>→</span>
+      </button>
+
+      {/* SECONDARY */}
+      <button onClick={onDFS} style={card(T.teal)}>
+        <div>
+          <div style={title(T.teal, 17)}>⚡ DFS PICKSETTER</div>
+          <div style={sub}>Daily lineup optimizer · stacks · injury alerts · ROI tracker</div>
+        </div>
+        <span style={{ color: T.teal, fontSize: 18 }}>→</span>
+      </button>
+
+      <button onClick={onWorldCup} style={card(T.blue)}>
+        <div>
+          <div style={title(T.blue, 17)}>⚽ WORLD CUP &rsquo;26 <span style={chip(T.green)}>● LIVE NOW</span></div>
+          <div style={sub}>Live scores · group standings · P.S. match intel · thru Jul 19</div>
+        </div>
+        <span style={{ color: T.blue, fontSize: 18 }}>→</span>
+      </button>
+
+      {savedDraftsCount > 0 && (
+        <button onClick={onPortfolio} style={card(T.green)}>
+          <div>
+            <div style={title(T.green, 15)}>📁 MY PORTFOLIO</div>
+            <div style={sub}>{savedDraftsCount} saved draft{savedDraftsCount === 1 ? '' : 's'} · exposure breakdown</div>
+          </div>
+          <span style={{ color: T.green, fontSize: 18 }}>→</span>
+        </button>
+      )}
+
+      <div style={{
+        fontFamily: "'Share Tech Mono',monospace", fontSize: 9, color: T.dim,
+        letterSpacing: 1, textAlign: 'center', marginTop: 18,
+      }}>NO ACCOUNT · NO INSTALL · WORKS ON IPHONE, ANDROID &amp; DESKTOP</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WORLD CUP 2026 TRACKER — live scores, fixtures, group standings
+// Display-only (analytics/tracking guardrail — no picks, no odds).
+// ═══════════════════════════════════════════════════════════════════════════
+function wcDateStr(offsetDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+  return `${y}${m}${dd}`;
+}
+
+function wcDayLabel(offsetDays) {
+  if (offsetDays === 0) return 'TODAY';
+  if (offsetDays === -1) return 'YESTERDAY';
+  if (offsetDays === 1) return 'TOMORROW';
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase();
+}
+
+function WcMatchCard({ m, fav, onUseAI, intel, onIntel }) {
+  const live = m.state === 'in';
+  const done = m.state === 'post';
+  const kickoff = new Date(m.date).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const setIntel = (text) => onIntel(m.id, text);
+  const [intelLoading, setIntelLoading] = useState(false);
+
+  const getIntel = async () => {
+    if (intelLoading || intel) return;
+    if (!onUseAI()) return;                    // free-tier daily gate
+    setIntelLoading(true);
+    try {
+      const res = await fetch('/api/ai', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001', max_tokens: 200,
+          system: 'You are a soccer analyst for a stats app. Give two sentences max on the matchup — recent form, tactical angle, key players. End with a final line: P.S. — [one sharp insight, max 12 words]. Analytics only; never mention betting, odds, or gambling.',
+          messages: [{ role: 'user', content: `World Cup 2026 ${m.stage || 'group stage'} match: ${m.away.name} at ${m.home.name}, ${m.venue}${m.city ? ', ' + m.city : ''}. Status: ${m.detail}. Score: ${m.home.abbr} ${m.home.score || 0}–${m.away.score || 0} ${m.away.abbr}.` }],
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      const text = data.content?.find(b => b.type === 'text')?.text || '';
+      setIntel(text.trim() || 'No intel available right now.');
+    } catch {
+      setIntel('Intel unavailable — check connection.');
+    } finally {
+      setIntelLoading(false);
+    }
+  };
+  const Row = ({ t, other }) => {
+    const winLoss = done && (t.winner ? 1 : (other.winner ? -1 : 0));
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+        {t.logo
+          ? <img src={t.logo} alt="" width={20} height={20} style={{ borderRadius: 3, flexShrink: 0 }} />
+          : <span style={{ width: 20 }} />}
+        <span style={{
+          flex: 1, fontSize: 14, fontWeight: winLoss === 1 ? 800 : 600,
+          color: winLoss === -1 ? T.mute : T.text,
+        }}>{t.name}</span>
+        {(live || done) && (
+          <span style={{
+            fontFamily: "'Share Tech Mono',monospace", fontSize: 16,
+            fontWeight: 800, color: winLoss === -1 ? T.mute : T.text,
+          }}>{t.score}</span>
+        )}
+      </div>
+    );
+  };
+  return (
+    <div style={{
+      background: T.card,
+      border: `1px solid ${fav ? `${T.gold}55` : live ? `${T.green}55` : T.border}`,
+      borderRadius: 12, padding: '10px 14px', marginBottom: 8,
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        fontSize: 10, color: T.mute, marginBottom: 4,
+        fontFamily: "'Share Tech Mono',monospace", letterSpacing: 0.5,
+      }}>
+        <span>{fav ? '★ ' : ''}{m.city ? m.city.toUpperCase() : m.venue.toUpperCase()}</span>
+        {live ? (
+          <span style={{ color: T.green, fontWeight: 700 }}>● LIVE {m.clock}</span>
+        ) : done ? (
+          <span>FT</span>
+        ) : (
+          <span>{kickoff}{m.tv && m.tv.length ? ` · ${m.tv[0]}` : ''}</span>
+        )}
+      </div>
+      <Row t={m.home} other={m.away} />
+      <Row t={m.away} other={m.home} />
+      {!intel && (
+        <button onClick={getIntel} disabled={intelLoading} style={{
+          marginTop: 8, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+          background: `${T.gold}14`, border: `1px solid ${T.gold}44`,
+          fontFamily: "'Share Tech Mono',monospace", fontSize: 9,
+          color: T.gold, letterSpacing: 1, opacity: intelLoading ? 0.6 : 1,
+        }}>{intelLoading ? 'ANALYZING…' : 'P.S. MATCH INTEL'}</button>
+      )}
+      {intel && (
+        <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.5, color: T.mute }}>
+          {intel.split('\n').filter(Boolean).map((ln, i) =>
+            ln.trim().startsWith('P.S.') ? (
+              <div key={i} style={{ color: T.gold, fontWeight: 600, marginTop: 4 }}>{ln}</div>
+            ) : (
+              <div key={i}>{ln}</div>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WcGroupTable({ g, favs, onToggleFav }) {
+  const th = { fontSize: 9, color: T.dim, fontFamily: "'Share Tech Mono',monospace", textAlign: 'center', padding: '2px 4px' };
+  const td = { fontSize: 12, color: T.mute, fontFamily: "'Share Tech Mono',monospace", textAlign: 'center', padding: '3px 4px' };
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: '10px 12px', marginBottom: 10 }}>
+      <div style={{
+        fontFamily: "'Barlow Condensed',sans-serif", fontSize: 14, fontWeight: 900,
+        color: T.slate, letterSpacing: 1, marginBottom: 6,
+      }}>{g.name.toUpperCase()}</div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, textAlign: 'left' }}>TEAM</th>
+            <th style={th}>GP</th><th style={th}>W</th><th style={th}>D</th>
+            <th style={th}>L</th><th style={th}>GD</th><th style={th}>PTS</th>
+            <th style={th}>★</th>
+          </tr>
+        </thead>
+        <tbody>
+          {g.teams.map((t, i) => (
+            <tr key={t.abbr || i} style={{ borderTop: `1px solid ${T.border}` }}>
+              <td style={{ ...td, textAlign: 'left' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ color: i < 2 ? T.green : T.dim, fontSize: 10, width: 10 }}>{i + 1}</span>
+                  {t.logo && <img src={t.logo} alt="" width={16} height={16} style={{ borderRadius: 2 }} />}
+                  <span style={{ fontFamily: "'Barlow',sans-serif", fontSize: 12, fontWeight: 700, color: T.text }}>{t.name}</span>
+                </span>
+              </td>
+              <td style={td}>{t.gp}</td><td style={td}>{t.w}</td><td style={td}>{t.d}</td>
+              <td style={td}>{t.l}</td>
+              <td style={{ ...td, color: t.gd > 0 ? T.green : t.gd < 0 ? T.mute : T.dim }}>{t.gd > 0 ? `+${t.gd}` : t.gd}</td>
+              <td style={{ ...td, fontWeight: 800, color: T.text }}>{t.pts}</td>
+              <td style={{ ...td, padding: '3px 0' }}>
+                <button onClick={() => onToggleFav(t.abbr)} title="Follow team" style={{
+                  background: 'none', border: 'none', cursor: 'pointer', fontSize: 13,
+                  color: favs.includes(t.abbr) ? T.gold : T.dim, padding: 0,
+                }}>{favs.includes(t.abbr) ? '★' : '☆'}</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function WorldCupScreen({ tier, onBack }) {
+  const [tab, setTab] = useState('matches');           // 'matches' | 'groups'
+  const [dayOff, setDayOff] = useState(0);
+  const [matchData, setMatchData] = useState({});       // dates → matches[]
+  const [groups, setGroups] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  // MY TEAMS — followed countries (abbrs), persisted
+  const [favs, setFavs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ps_wc_favs') || '[]'); } catch { return []; }
+  });
+  const toggleFav = (abbr) => setFavs(f => {
+    const n = f.includes(abbr) ? f.filter(x => x !== abbr) : [...f, abbr];
+    try { localStorage.setItem('ps_wc_favs', JSON.stringify(n)); } catch {}
+    return n;
+  });
+
+  // P.S. Match Intel — free tier 3/day, Pro unlimited
+  const WC_AI_FREE = 3;
+  const [aiUses, setAiUses] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('ps_wc_ai_uses') || 'null');
+      return raw && raw.d === new Date().toDateString() ? (raw.n || 0) : 0;
+    } catch { return 0; }
+  });
+  const [atAiLimit, setAtAiLimit] = useState(false);
+  const [intelMap, setIntelMap] = useState({});       // match id → intel text (survives tab switches)
+  const cacheIntel = (id, text) => setIntelMap(p => ({ ...p, [id]: text }));
+  const useAI = () => {
+    if (isPro(tier)) return true;
+    if (aiUses >= WC_AI_FREE) { setAtAiLimit(true); return false; }
+    const n = aiUses + 1;
+    setAiUses(n);
+    if (n >= WC_AI_FREE) setAtAiLimit(true);
+    try { localStorage.setItem('ps_wc_ai_uses', JSON.stringify({ d: new Date().toDateString(), n })); } catch {}
+    return true;
+  };
+
+  const dates = wcDateStr(dayOff);
+  const raw = matchData[dates];
+  // followed teams' matches pinned to top
+  const matches = raw && [...raw].sort((a, b) => {
+    const af = favs.includes(a.home.abbr) || favs.includes(a.away.abbr) ? 0 : 1;
+    const bf = favs.includes(b.home.abbr) || favs.includes(b.away.abbr) ? 0 : 1;
+    return af - bf || String(a.date).localeCompare(String(b.date));
+  });
+
+  useEffect(() => {
+    if (tab !== 'matches') return;
+    let dead = false;
+    const load = () => {
+      setErr(null);
+      if (!matchData[dates]) setLoading(true);
+      fetch(`/api/worldcup?dates=${dates}`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(d => { if (!dead) setMatchData(prev => ({ ...prev, [dates]: d.matches || [] })); })
+        .catch(() => { if (!dead && !matchData[dates]) setErr('Could not load matches — try again shortly.'); })
+        .finally(() => { if (!dead) setLoading(false); });
+    };
+    load();
+    const iv = setInterval(load, 60000);                // refresh scores every 60s
+    return () => { dead = true; clearInterval(iv); };
+  }, [tab, dates]);
+
+  useEffect(() => {
+    if (tab !== 'groups' || groups) return;
+    let dead = false;
+    setErr(null); setLoading(true);
+    fetch('/api/worldcup?view=standings')
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { if (!dead) setGroups(d.groups || []); })
+      .catch(() => { if (!dead) setErr('Could not load standings — try again shortly.'); })
+      .finally(() => { if (!dead) setLoading(false); });
+    return () => { dead = true; };
+  }, [tab, groups]);
+
+  const tabBtn = (id, label) => (
+    <button onClick={() => setTab(id)} style={{
+      flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer',
+      fontFamily: "'Barlow Condensed',sans-serif", fontSize: 14, fontWeight: 900, letterSpacing: 1,
+      background: tab === id ? `${T.blue}22` : 'transparent',
+      border: `1px solid ${tab === id ? `${T.blue}55` : T.border}`,
+      color: tab === id ? T.blue : T.mute,
+    }}>{label}</button>
+  );
+
+  return (
+    <div style={{ minHeight: '100vh', background: T.bg, padding: '18px 16px 40px', maxWidth: 560, margin: '0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <button onClick={onBack} style={{
+          background: 'none', border: `1px solid ${T.border}`, borderRadius: 8,
+          color: T.mute, fontSize: 14, padding: '6px 12px', cursor: 'pointer',
+        }}>←</button>
+        <div>
+          <div style={{
+            fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 900,
+            color: T.text, letterSpacing: 1,
+          }}>WORLD CUP &rsquo;26 <span style={{ color: T.blue }}>TRACKER</span></div>
+          <div style={{ fontSize: 10, color: T.dim, fontFamily: "'Share Tech Mono',monospace", letterSpacing: 0.5 }}>
+            LIVE SCORES · STANDINGS · JUN 11 – JUL 19
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {tabBtn('matches', 'MATCHES')}
+        {tabBtn('groups', 'GROUPS')}
+      </div>
+
+      {tab === 'matches' && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <button onClick={() => setDayOff(o => o - 1)} style={{
+              background: T.card, border: `1px solid ${T.border}`, borderRadius: 8,
+              color: T.mute, padding: '4px 14px', cursor: 'pointer', fontSize: 14,
+            }}>‹</button>
+            <span style={{
+              fontFamily: "'Share Tech Mono',monospace", fontSize: 12, color: T.slate, letterSpacing: 1,
+            }}>{wcDayLabel(dayOff)}</span>
+            <button onClick={() => setDayOff(o => o + 1)} style={{
+              background: T.card, border: `1px solid ${T.border}`, borderRadius: 8,
+              color: T.mute, padding: '4px 14px', cursor: 'pointer', fontSize: 14,
+            }}>›</button>
+          </div>
+          {err && !matches && <div style={{ color: T.red, fontSize: 12, textAlign: 'center', padding: 20 }}>{err}</div>}
+          {loading && !matches && <div style={{ color: T.dim, fontSize: 12, textAlign: 'center', padding: 20 }}>Loading…</div>}
+          {matches && matches.length === 0 && (
+            <div style={{ color: T.dim, fontSize: 12, textAlign: 'center', padding: 20 }}>No matches this day.</div>
+          )}
+          {atAiLimit && !isPro(tier) && (
+            <div style={{
+              background: `${T.gold}10`, border: `1px solid ${T.gold}33`, borderRadius: 10,
+              padding: '8px 12px', marginBottom: 10, fontSize: 11, color: T.gold,
+              fontFamily: "'Share Tech Mono',monospace", textAlign: 'center', letterSpacing: 0.5,
+            }}>FREE MATCH INTEL USED ({WC_AI_FREE}/DAY) — PRO = UNLIMITED. UPGRADE ON HOME SCREEN.</div>
+          )}
+          {matches && matches.map(m => (
+            <WcMatchCard key={m.id} m={m} onUseAI={useAI}
+              intel={intelMap[m.id]} onIntel={cacheIntel}
+              fav={favs.includes(m.home.abbr) || favs.includes(m.away.abbr)} />
+          ))}
+          {matches && matches.length > 0 && favs.length === 0 && (
+            <div style={{ fontSize: 10, color: T.dim, textAlign: 'center', marginTop: 4, fontFamily: "'Share Tech Mono',monospace" }}>
+              TIP: ★ TEAMS IN THE GROUPS TAB — THEIR MATCHES PIN TO THE TOP
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === 'groups' && (
+        <>
+          {err && !groups && <div style={{ color: T.red, fontSize: 12, textAlign: 'center', padding: 20 }}>{err}</div>}
+          {loading && !groups && <div style={{ color: T.dim, fontSize: 12, textAlign: 'center', padding: 20 }}>Loading…</div>}
+          {groups && groups.map(g => <WcGroupTable key={g.name} g={g} favs={favs} onToggleFav={toggleFav} />)}
+          {groups && (
+            <div style={{ fontSize: 10, color: T.dim, textAlign: 'center', marginTop: 4, fontFamily: "'Share Tech Mono',monospace" }}>
+              TOP 2 ADVANCE (GREEN) + 8 BEST THIRD-PLACE TEAMS · ★ = FOLLOW TEAM
+            </div>
+          )}
+        </>
+      )}
+
+      <div style={{ marginTop: 18 }}>
+        <EmailCapture source="worldcup" />
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // WELCOME SCREEN — landing page for new users
 // ═══════════════════════════════════════════════════════════════════════════
 function WelcomeScreen({ onStart }) {
   const handleStart = () => {
-    localStorage.setItem('copilot_v3_seen', '1');
+    localStorage.setItem('picksetter_v1_seen', '1');
     onStart();
   };
 
@@ -4668,10 +6951,10 @@ function WelcomeScreen({ onStart }) {
             fontFamily:"'Barlow Condensed',sans-serif",
             fontSize:16,fontWeight:900,color:"#060A12",
             boxShadow:"0 0 20px rgba(255,209,102,0.35)",
-          }}>CP</div>
+          }}>PS.</div>
           <div>
-            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:12,fontWeight:700,color:"#FFD166",letterSpacing:2}}>COPILOT</div>
-            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#475068",letterSpacing:1.5}}>BEST BALL INTELLIGENCE</div>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:12,fontWeight:700,color:"#FFD166",letterSpacing:2}}>PICKSETTER</div>
+            <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#475068",letterSpacing:1.5}}>SET YOUR EDGE.</div>
           </div>
           <div style={{
             marginLeft:"auto",
@@ -4688,12 +6971,12 @@ function WelcomeScreen({ onStart }) {
           letterSpacing:-1,margin:"0 0 16px",
         }}>
           BUILT TO<br/>
-          <span style={{color:"#FFD166"}}>WIN BBM.</span>
+          <span style={{color:"#FFD166"}}>WIN BIG.</span>
         </h1>
 
         <p style={{fontSize:15,lineHeight:1.65,color:"#8892AA",margin:"0 0 24px",maxWidth:340}}>
           Run this alongside your live draft on Underdog or DraftKings.
-          Copilot tracks the board, flags value windows, and tells you
+          PickSetter tracks the board, flags value windows, and tells you
           exactly what to take — pick by pick.
         </p>
 
@@ -4705,9 +6988,9 @@ function WelcomeScreen({ onStart }) {
         }}>
           <div style={{fontFamily:"'Share Tech Mono',monospace",fontSize:8,color:"#FFD166",letterSpacing:2,marginBottom:12}}>HOW IT WORKS</div>
           {[
-            ["1","Open Copilot + your Underdog draft side by side"],
+            ["1","Open PickSetter + your Underdog draft side by side"],
             ["2","Enter your draft slot, then tap ENTER DRAFT ROOM"],
-            ["3","Log each pick as it happens — Copilot handles the rest"],
+            ["3","Log each pick as it happens — PickSetter handles the rest"],
           ].map(([n,text])=>(
             <div key={n} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:9}}>
               <div style={{
@@ -4815,6 +7098,25 @@ function PortfolioScreen({ savedDrafts, onBack }) {
   const slotCounts = {};
   savedDrafts.forEach(d => { slotCounts[d.slot] = (slotCounts[d.slot]||0)+1; });
 
+  // Archetype tagging
+  const archetypes = savedDrafts.map(draft => {
+    const roster = draft.roster || [];
+    const rbs = roster.filter(p => p.pos === 'RB').length;
+    const qbs = roster.filter(p => p.pos === 'QB').length;
+    const tes = roster.filter(p => p.pos === 'TE').length;
+    const earlyRbs = roster.filter(p => p.pos === 'RB' && p.adp <= 36).length;
+    if (earlyRbs >= 2) return 'HERO RB';
+    if (rbs <= 2) return 'ZERO RB';
+    if (rbs >= 6) return 'ROBUST RB';
+    if (tes >= 3) return 'TE PREMIUM';
+    if (qbs >= 3) return 'QB HEAVY';
+    return 'BALANCED';
+  });
+  const archetypeCount = {};
+  archetypes.forEach(a => { archetypeCount[a] = (archetypeCount[a] || 0) + 1; });
+
+  const [targetExposure, setTargetExposure] = useState(35);
+
   return (
     <div style={{ minHeight:"100svh", background:T.bg, fontFamily:"'Barlow',sans-serif", color:T.text, paddingBottom:48 }}>
       {/* Header */}
@@ -4825,6 +7127,20 @@ function PortfolioScreen({ savedDrafts, onBack }) {
             <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2 }}>PORTFOLIO ANALYTICS</div>
             <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:22, fontWeight:900 }}>{total} DRAFT{total!==1?'S':''} ANALYZED</div>
           </div>
+        </div>
+      </div>
+
+      {/* Target Exposure Banner */}
+      <div style={{ background:T.card, borderLeft:`3px solid ${T.gold}`, padding:'10px 16px', margin:'12px 16px 0', borderRadius:'0 8px 8px 0' }}>
+        <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.gold, letterSpacing:1.5, marginBottom:4 }}>MAX EXPOSURE TARGET</div>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <input type="range" min="10" max="100" step="5" value={targetExposure}
+            onChange={e => setTargetExposure(Number(e.target.value))}
+            style={{ flex:1, accentColor:T.gold }} />
+          <span style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:22, fontWeight:900, color:T.gold, minWidth:40 }}>{targetExposure}%</span>
+        </div>
+        <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:T.dim, marginTop:4 }}>
+          {topExposed.filter(e => e.pct > targetExposure).length} players over target
         </div>
       </div>
 
@@ -4875,11 +7191,33 @@ function PortfolioScreen({ savedDrafts, onBack }) {
           </div>
         </div>
 
+        {/* Archetype Distribution */}
+        <div style={{ background:T.panel, borderRadius:12, border:`1px solid ${T.border}`, padding:16, marginBottom:14 }}>
+          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:12 }}>PORTFOLIO ARCHETYPES</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+            {Object.entries(archetypeCount).sort(([,a],[,b])=>b-a).map(([arch, cnt]) => {
+              const archColors = {
+                'HERO RB': T.green, 'ZERO RB': T.blue, 'ROBUST RB': T.amber,
+                'TE PREMIUM': T.purple, 'QB HEAVY': T.red, 'BALANCED': T.mute
+              };
+              const col = archColors[arch] || T.mute;
+              const pct = ((cnt/total)*100).toFixed(0);
+              return (
+                <div key={arch} style={{ flex:1, minWidth:100, background:T.card, borderRadius:8, padding:'10px 12px', border:`1px solid ${col}33` }}>
+                  <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:11, fontWeight:700, color:col, marginBottom:4 }}>{arch}</div>
+                  <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:24, fontWeight:900, color:col, lineHeight:1 }}>{cnt}</div>
+                  <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:T.dim, marginTop:2 }}>{pct}% of portfolio</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Top exposed players */}
         <div style={{ background:T.panel, borderRadius:12, border:`1px solid ${T.border}`, padding:16, marginBottom:14 }}>
           <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, letterSpacing:2, marginBottom:12 }}>PLAYER EXPOSURE</div>
           {topExposed.map((e, i) => {
-            const col = e.pct >= 60 ? T.red : e.pct >= 35 ? T.amber : T.green;
+            const col = e.pct >= targetExposure ? T.red : e.pct >= targetExposure * 0.7 ? T.amber : T.green;
             return (
               <div key={e.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 0", borderBottom:i<topExposed.length-1?`1px solid ${T.border}`:"none" }}>
                 <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:T.dim, minWidth:18 }}>{i+1}</span>
@@ -4891,6 +7229,7 @@ function PortfolioScreen({ savedDrafts, onBack }) {
                     <div style={{ width:`${Math.min(100,e.pct)}%`, height:"100%", background:col }}/>
                   </div>
                   <span style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:14, fontWeight:900, color:col, minWidth:38, textAlign:"right" }}>{e.pct.toFixed(0)}%</span>
+                  {e.pct >= 50 && <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:8, color:T.red, marginLeft:4 }}>⚠ HIGH</span>}
                 </div>
               </div>
             );

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * COPILOT ADP Updater
+ * PickSetter ADP Updater
  * Fetches current Underdog Best Ball ADP from fantasypoints.com
  * Updates src/players-data.js and rebuilds public/app.js
  *
@@ -155,7 +155,7 @@ module.exports = { RAW, BYE_WEEKS };
 }
 
 async function main() {
-  console.log('=== COPILOT ADP Updater ===');
+  console.log('=== PickSetter ADP Updater ===');
   console.log(`Date: ${new Date().toISOString()}`);
   console.log(`Fetching: ${ADP_URL}`);
 
