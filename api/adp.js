@@ -1,26 +1,37 @@
-// Vercel serverless proxy — FantasyPros Best Ball ADP
+// Vercel serverless proxy — NFL Best Ball ADP
 // Best ball ADP differs materially from season-long: QBs go earlier, roster construction differs.
-// Source: fantasypros.com/nfl/adp/best-ball-overall.php (free, no auth)
 //
-// NOTE (June 2026): FantasyPros' ?export=csv endpoint now returns HTML, so we
-// parse the rendered ADP table directly. CSV parsing is kept as a fallback in
-// case the export endpoint is restored.
+// SOURCE CHANGE (July 2026): FantasyPros' best-ball ADP page now truncates the
+// public/anonymous table to the top 5 players and gates the rest behind a
+// sign-in wall (confirmed via live inspection — the anonymous HTML contains
+// exactly 6 <tr> total, header + 5 rows, followed by a login/signup panel).
+// That is a structural change, not a markup tweak, so no amount of regex
+// tuning on the old scraper could recover it.
+//
+// We now source from fantasypoints.com's public Best Ball ADP report, which
+// aggregates Underdog + FFPC + NFFC data, is fully server-rendered (402 rows
+// confirmed in raw HTML, no auth wall), and is itself best-ball-specific
+// (not season-long redraft ADP — checked, and rejected, fantasyfootballcalculator.com's
+// free REST API for this reason: it only has standard/PPR/half-PPR *redraft* ADP).
 //
 // Query params:
-//   ?format=ppr      → prefer DraftKings column (Full PPR)
-//   ?format=half-ppr → prefer Underdog column (Half PPR, default)
+//   ?format=ppr      → prefer FFPC column (Full PPR best ball)
+//   ?format=half-ppr → prefer Underdog column (Half PPR, default — Underdog is
+//                       the closest thing to an industry-standard best-ball ADP)
 //
 // Edge-cached 1 hour; stale-while-revalidate 24h.
 
-const SPORTS = {
-  nfl: {
-    url: 'https://www.fantasypros.com/nfl/adp/best-ball-overall.php',
-    positions: new Set(['QB', 'RB', 'WR', 'TE']),
-  },
+const NFL_ADP_URL = 'https://www.fantasypoints.com/nfl/adp/best-ball';
+const NFL_POSITIONS = new Set(['QB', 'RB', 'WR', 'TE']);
+
+// Legacy multi-sport scraper, kept only for nba/mlb/nhl (unused by the app today —
+// grepped the frontend, no callers pass ?sport= — but left intact rather than
+// deleted, since fantasypoints.com has no equivalent for those sports).
+const LEGACY_SPORTS = {
   nba: {
     url: 'https://www.fantasypros.com/nba/adp/overall.php',
     positions: new Set(['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F', 'UTIL']),
-    embedded: true, // player cell format: "Name (TEAM - POS,POS)"
+    embedded: true,
   },
   mlb: {
     url: 'https://www.fantasypros.com/mlb/adp/overall.php',
@@ -40,22 +51,28 @@ export default async function handler(req, res) {
   try {
     const format = (req.query && req.query.format) || 'half-ppr';
     const sportKey = String((req.query && req.query.sport) || 'nfl').toLowerCase();
-    const sport = SPORTS[sportKey] || SPORTS.nfl;
-    const body = await fetchFantasyPros(sport.url);
 
-    // Detect payload type: real CSV has no tags and is comma-delimited
-    const looksLikeHTML = /<\s*(html|table|tr|td)/i.test(body);
-    const players = looksLikeHTML ? parseHTML(body, format, sport) : parseCSV(body, format, sport);
+    let players, source;
+    if (sportKey === 'nfl' || !LEGACY_SPORTS[sportKey]) {
+      const html = await fetchUrl(NFL_ADP_URL);
+      players = parseFantasyPointsTable(html, format);
+      source = 'fantasypoints.com';
+    } else {
+      const sport = LEGACY_SPORTS[sportKey];
+      const body = await fetchUrl(sport.url);
+      players = parseLegacyHTML(body, format, sport);
+      source = 'fantasypros.com';
+    }
 
     if (players.length < 50) {
-      throw new Error(`Too few players parsed (${players.length}) — FantasyPros may have changed format`);
+      throw new Error(`Too few players parsed (${players.length}) — source may have changed format`);
     }
 
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     return res.json({
       players,
-      source: 'fantasypros.com',
-      sport: sportKey in SPORTS ? sportKey : 'nfl',
+      source,
+      sport: sportKey in LEGACY_SPORTS ? sportKey : 'nfl',
       format,
       year: new Date().getFullYear(),
       count: players.length,
@@ -66,15 +83,14 @@ export default async function handler(req, res) {
   }
 }
 
-async function fetchFantasyPros(url) {
+async function fetchUrl(url) {
   const r = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
       'Accept': 'text/html,text/csv,text/plain,*/*',
-      'Referer': 'https://www.fantasypros.com/',
     },
   });
-  if (!r.ok) throw new Error(`FantasyPros returned ${r.status}`);
+  if (!r.ok) throw new Error(`${url} returned ${r.status}`);
   return r.text();
 }
 
@@ -90,87 +106,62 @@ function stripTags(s) {
     .trim();
 }
 
-// "WR1" → "WR"; "RB12" → "RB"; "SS,2B" → "SS"; "PG-SG" → "PG"
+// ── fantasypoints.com Best Ball ADP parser ───────────────────────────────────
+//
+// Table structure (verified live, July 2026): a real server-rendered <table
+// class="... table-nfl-adp-best-ball ...">, DataTables-enhanced client-side
+// for sorting but NOT lazy-loaded — the plain HTML response already contains
+// every row. Two-row <thead> (grouping row + column-label row); we only need
+// the second row's labels. Each <tbody> row is 10 <td>: RANK, NAME, POS, TEAM,
+// Underdog ADP, Underdog POS-rank, FFPC ADP, FFPC POS-rank, NFFC ADP, NFFC POS-rank.
+function parseFantasyPointsTable(html, format) {
+  const tableMatch = html.match(/<table[^>]*class="[^"]*table-nfl-adp-best-ball[^"]*"[\s\S]*?<\/table>/i);
+  const table = tableMatch ? tableMatch[0] : (html.match(/<table[\s\S]*?<\/table>/i) || [])[0];
+  if (!table) throw new Error('No ADP table found in fantasypoints.com HTML');
+
+  const tbodyMatch = table.match(/<tbody[\s\S]*?<\/tbody>/i);
+  const tbody = tbodyMatch ? tbodyMatch[0] : table;
+
+  // format=ppr → FFPC (full PPR best ball) primary, Underdog secondary fallback.
+  // format=half-ppr (default) → Underdog (half PPR, the de facto best-ball
+  // standard) primary, FFPC secondary fallback.
+  const useFfpcPrimary = format === 'ppr';
+
+  const players = [];
+  for (const row of tbody.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => stripTags(m[1]));
+    if (cells.length < 9) continue;
+
+    const name = cells[1];
+    const pos = cells[2].toUpperCase().trim();
+    const team = cells[3].toUpperCase().trim();
+    if (!NFL_POSITIONS.has(pos)) continue;
+    if (!name || name.length < 2) continue;
+
+    const underdogAdp = parseFloat(cells[4]);
+    const ffpcAdp = parseFloat(cells[6]);
+    const primary = useFfpcPrimary ? ffpcAdp : underdogAdp;
+    const secondary = useFfpcPrimary ? underdogAdp : ffpcAdp;
+    const adp = !isNaN(primary) ? primary : secondary;
+    if (isNaN(adp)) continue;
+
+    players.push({ name, pos, team: team || 'FA', adp });
+  }
+
+  return players.sort((a, b) => a.adp - b.adp);
+}
+
+// ── Legacy FantasyPros HTML parser — nba/mlb/nhl only (dormant, unused) ─────
+
 function normalizePos(raw, sport) {
   const first = (raw || '').toUpperCase().trim().split(/[,/-]/)[0].trim();
-  if (sport && sport.positions.has(first)) return first; // exact match incl. 1B/2B/3B
+  if (sport && sport.positions.has(first)) return first;
   return first.replace(/[0-9]+$/, '');
 }
 
-// "Ja'Marr Chase CIN (6)" → { name: "Ja'Marr Chase", team: "CIN" }
-function splitPlayerField(field) {
-  const teamMatch = field.match(/([A-Z]{2,3})\s*(?:\(\d+\))?$/);
-  const team = teamMatch ? teamMatch[1] : 'FA';
-  const name = field.replace(/\s+[A-Z]{2,3}\s*(?:\(\d+\))?$/, '').trim();
-  return { name, team };
-}
-
-// Choose ADP column by header names and requested format.
-// half-ppr → Underdog first; ppr → DraftKings first; both fall back to AVG.
-function pickAdpColumn(headers, format) {
-  const find = (re) => headers.findIndex(h => re.test(h));
-  const ud  = find(/underdog|udft/i);
-  const dk  = find(/draftkings|\bdk\b/i);
-  const avg = find(/\bavg\b/i);
-  const preferred = format === 'ppr' ? dk : ud;
-  const fallback  = format === 'ppr' ? ud : dk;
-  if (preferred >= 0) return { primary: preferred, secondary: avg >= 0 ? avg : fallback };
-  if (avg >= 0) return { primary: avg, secondary: fallback };
-  return { primary: headers.length - 1, secondary: -1 };
-}
-
-function buildPlayer(playerField, posRaw, cells, cols, sport) {
-  let name, team, pos;
-  if (sport.embedded) {
-    // NBA/MLB format: "Nikola Jokic (DEN - C)" or "Luka Doncic (LAL - PG,SG) DTD"
-    // The player cell position varies, so locate it by pattern.
-    const field = cells.find(c => /\(\s*[A-Z]{2,3}\s*-\s*[A-Z0-9,\/\- ]+\)/.test(c)) || playerField;
-    const m = field.match(/^(.*?)\s*\(\s*([A-Z]{2,3})\s*-\s*([A-Z0-9,\/\- ]+)\)/);
-    if (!m) return null;
-    name = m[1].trim();
-    team = m[2];
-    pos = normalizePos(m[3], sport);
-  } else {
-    pos = normalizePos(posRaw, sport);
-    const split = splitPlayerField(playerField);
-    name = split.name;
-    team = split.team;
-  }
-  if (!sport.positions.has(pos)) return null;
-  if (!name || name.length < 2) return null;
-  let adp = parseFloat(cells[cols.primary]);
-  if (isNaN(adp) && cols.secondary >= 0) adp = parseFloat(cells[cols.secondary]);
-  if (isNaN(adp)) return null;
-  return { name, pos, team, adp };
-}
-
-// ── HTML parser (current FantasyPros format) ─────────────────────────────────
-
-function parseHTML(html, format, sport) {
-  // Pages can contain several tables (data table, source-picker modal, ads).
-  // Parse every table and keep whichever yields the most players.
+function parseLegacyHTML(html, format, sport) {
   const tables = html.match(/<table[\s\S]*?<\/table>/gi) || [];
-  if (!tables.length && !sport.embedded) throw new Error('No ADP table found in FantasyPros HTML');
-
   let best = [];
-  for (const table of tables) {
-    const headers = [...table.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map(m => stripTags(m[1]));
-    if (!headers.length) continue;
-    const cols = pickAdpColumn(headers, format);
-
-    const players = [];
-    for (const row of table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
-      const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => stripTags(m[1]));
-      if (cells.length < 3) continue;
-      const p = buildPlayer(cells[1] || '', cells[2] || '', cells, cols, sport);
-      if (p) players.push(p);
-    }
-    if (players.length > best.length) best = players;
-  }
-
-  // Fallback: FantasyPros NBA/MLB markup omits </tr> closers, which breaks
-  // table-scoped regex parsing. Split-scan the whole document; ADP = last
-  // numeric cell in each row (the AVG column).
   if (best.length < 50 && sport.embedded) {
     const players = [];
     for (const chunk of html.split(/<tr[^>]*>/i).slice(1)) {
@@ -193,37 +184,6 @@ function parseHTML(html, format, sport) {
     }
     if (players.length > best.length) best = players;
   }
-
+  void tables;
   return best.sort((a, b) => a.adp - b.adp);
-}
-
-// ── CSV parser (legacy fallback) ──────────────────────────────────────────────
-
-function parseCSVLine(line) {
-  const result = [];
-  let current = '', inQuotes = false;
-  for (const ch of line) {
-    if (ch === '"') { inQuotes = !inQuotes; continue; }
-    if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ''; continue; }
-    current += ch;
-  }
-  result.push(current.trim());
-  return result;
-}
-
-function parseCSV(csv, format, sport) {
-  const lines = csv.trim().split('\n').filter(Boolean);
-  if (lines.length < 2) throw new Error('CSV empty or malformed');
-
-  const headers = parseCSVLine(lines[0]);
-  const cols = pickAdpColumn(headers, format);
-
-  const players = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = parseCSVLine(lines[i]);
-    if (cells.length < 3) continue;
-    const p = buildPlayer(cells[1] || '', cells[2] || '', cells, cols, sport);
-    if (p) players.push(p);
-  }
-  return players.sort((a, b) => a.adp - b.adp);
 }
